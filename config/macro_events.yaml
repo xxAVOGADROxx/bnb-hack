@@ -1,0 +1,36 @@
+# Scheduled macro-event blackout windows (risk engine reads this at startup
+# and on every cycle — edits are picked up without a restart).
+#
+# Levels:
+#   high   -> no new entries from T-pre_h to T+post_h (post-event whipsaw is
+#             usually worse than the pre-event drift). Exits and the daily
+#             compliance trade are never blocked.
+#   medium -> new entries sized at 50% inside the window.
+#
+# times are UTC, format "YYYY-MM-DD HH:MM".
+#
+# ⚠️ VERIFY every timestamp against the official calendars before June 21
+# (federalreserve.gov + BLS/BEA release schedules). US releases at
+# 8:30 AM ET = 12:30 UTC during June (EDT); 10:00 AM ET = 14:00 UTC.
+
+defaults:
+  high:   { pre_h: 2.0, post_h: 3.0 }
+  medium: { pre_h: 1.0, post_h: 1.0 }
+
+events:
+  # --- competition week 2026-06-22 .. 2026-06-28 ---
+  - name: "US Consumer Confidence (Conference Board)"
+    level: medium
+    time_utc: "2026-06-23 14:00"
+  - name: "US Durable Goods Orders (May)"
+    level: medium
+    time_utc: "2026-06-25 12:30"
+  - name: "US GDP Q1 third estimate"
+    level: medium
+    time_utc: "2026-06-25 12:30"
+  - name: "US Initial Jobless Claims"
+    level: medium
+    time_utc: "2026-06-25 12:30"
+  - name: "US PCE inflation (May) — Fed's preferred gauge, new chair"
+    level: high
+    time_utc: "2026-06-26 12:30"

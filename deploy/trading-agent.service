@@ -1,0 +1,20 @@
+# systemd alternative to docker (see DEPLOY.md option B) — requires
+# twak-serve.service running alongside.
+[Unit]
+Description=BNB Hack autonomous trading agent (BSC, self-custody via TWAK)
+After=network-online.target twak-serve.service
+Wants=network-online.target
+Requires=twak-serve.service
+
+[Service]
+Type=simple
+User=broncano
+WorkingDirectory=/home/broncano/apps/dorahacks/bnb-hack-1337
+ExecStart=/home/broncano/apps/dorahacks/bnb-hack-1337/.venv/bin/python -m agent --live
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=TWAK_SERVE_URL=http://127.0.0.1:3000
+
+[Install]
+WantedBy=multi-user.target

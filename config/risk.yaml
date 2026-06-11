@@ -1,0 +1,26 @@
+# Risk engine configuration. Every value is enforced by agent/risk/engine.py
+# and every decision against these rules is logged to data/decisions.jsonl.
+# Values are starting points to be calibrated before going live.
+
+drawdown:                  # measured from high-water mark, hourly snapshots
+  alert_pct: 10.0          # notify human
+  pause_entries_pct: 15.0  # no new positions
+  hard_stop_pct: 20.0      # flatten to stables (official DQ cap is ~30%)
+
+position:
+  max_position_pct: 25.0   # max single position, % of portfolio value
+  max_concurrent: 3
+
+limits:
+  max_trades_per_day: 4    # anti-overtrading: friction eats returns
+  max_slippage_pct: 1.0    # quote above this -> do not trade
+  min_expected_edge_pct: 2.0  # entries must clear the cost floor with margin
+
+compliance:
+  daily_trade_deadline_utc: "20:00"  # force a minimal eligible trade if none yet that UTC day
+  min_portfolio_usd: 5.0             # stay far above the $1 zero-hour rule
+
+data:
+  max_signal_age_min: 10   # freshness gate: stale/failed data -> no new entries
+  cycle_interval_s: 300
+  regime_cache_min: 20

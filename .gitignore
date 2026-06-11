@@ -1,0 +1,17 @@
+# Secrets — never commit. Keys leaked in git history = drained wallet.
+.env
+*.keystore
+credentials*.json
+
+# Runtime state and logs
+data/
+
+# Private strategy selection — never publish the real watchlist
+config/watchlist.local.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/

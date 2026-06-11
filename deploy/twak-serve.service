@@ -1,0 +1,16 @@
+# systemd alternative to docker (see DEPLOY.md option B)
+[Unit]
+Description=TWAK REST wallet server (local signing)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=broncano
+EnvironmentFile=/home/broncano/apps/dorahacks/bnb-hack-1337/.env
+ExecStart=/usr/bin/env twak serve --rest --port 3000 --host 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
