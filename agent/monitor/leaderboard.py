@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from agent.chain import (  # shared on-chain primitives (also re-exported for tests)
-    MULTICALL3, RPC_POOL, SEL_BALANCE_OF, SEL_DECIMALS, Rpc,
+    MULTICALL3, SEL_BALANCE_OF, SEL_DECIMALS, Rpc,
     decode_aggregate3, encode_aggregate3,
 )
 from agent.cmc.client import CMCClient, CMCError, usd_quote
