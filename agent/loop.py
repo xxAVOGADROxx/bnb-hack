@@ -70,10 +70,12 @@ class Agent:
     def run(self, once: bool = False, max_hours: float | None = None) -> None:
         mode = "LIVE" if not self.cfg.dry_run else "dry-run"
         log.info("agent starting (%s, chain=%s)", mode, self.cfg.chain)
+        # Bootstrap the symbol->id->address caches if a fresh clone has none
+        # (data/ is gitignored; these are public, regenerable reference data).
+        universe = [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables]
+        self.registry.ensure_id_map(self.cmc, universe)
         # Contract addresses are mandatory for execution — resolve up front.
-        self.registry.ensure_addresses(
-            self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables]
-        )
+        self.registry.ensure_addresses(self.cmc, universe)
         deadline = None
         window = ""
         if max_hours:

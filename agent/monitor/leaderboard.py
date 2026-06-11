@@ -108,6 +108,9 @@ class LeaderboardMonitor:
 
     # valuation universe: eligible tokens that exist as BSC contracts
     def _universe(self) -> list[tuple[str, str]]:
+        # Self-bootstrap on a fresh clone: id map first (the agent only builds
+        # ids for its watchlist; the board values the whole allowlist).
+        self.registry.ensure_id_map(self.cmc, list(self.allowlist))
         self.registry.ensure_addresses(self.cmc, list(self.allowlist))
         return [(s, self.registry.addresses[s]) for s in self.allowlist
                 if s in self.registry.addresses]
