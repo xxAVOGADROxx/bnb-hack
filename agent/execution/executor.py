@@ -95,7 +95,10 @@ class Executor:
                 )
                 log.info("rejected [price_impact]: %.2f%% > %.2f%%", impact, self.max_slippage_pct)
                 return None
-            result = self.twak.swap(from_ref, to_ref, proposal.usd, self.max_slippage_pct)
+            result = self.twak.swap(
+                from_ref, to_ref, proposal.usd, self.max_slippage_pct,
+                amount=proposal.amount,  # exits sell the exact held token amount
+            )
         except TwakError as e:
             self.decisions.append("trade_failed", error=str(e), **base)
             log.error("swap failed: %s", e)

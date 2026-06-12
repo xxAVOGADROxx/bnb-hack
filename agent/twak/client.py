@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 
 import requests
@@ -28,6 +29,13 @@ log = logging.getLogger(__name__)
 
 class TwakError(RuntimeError):
     pass
+
+
+def _is_approval_race(msg: str) -> bool:
+    """The REST swap action fires the token approval and the swap together;
+    if the approval hasn't confirmed, the swap reverts with one of these."""
+    m = msg.lower()
+    return "check allowance" in m or "approval was sent" in m or "execution reverted" in m
 
 
 @dataclass(frozen=True)
@@ -97,16 +105,21 @@ class TwakClient:
             "--quote-only",
         )
 
-    def swap(self, from_token: str, to_token: str, usd: float, slippage_pct: float) -> dict:
+    def swap(self, from_token: str, to_token: str, usd: float, slippage_pct: float,
+             amount: float | None = None) -> dict:
         if self.dry_run:
             log.info("[dry-run] swap %s->%s $%.2f: quote only, no tx", from_token, to_token, usd)
             return {"dry_run": True, "quote": self.quote(from_token, to_token, usd, slippage_pct).raw}
-        return self._run(
-            "swap", from_token, to_token,
-            "--chain", self.chain,
-            "--usd", f"{usd:.2f}",
-            "--slippage", str(slippage_pct),
-        )
+        if amount is not None:
+            # Sell an exact token amount (exits): `twak swap <amount> <from> <to>`.
+            args = ["swap", f"{amount:.18f}".rstrip("0").rstrip("."), from_token, to_token]
+        else:
+            args = ["swap", from_token, to_token, "--usd", f"{usd:.2f}"]
+        args += ["--chain", self.chain, "--slippage", str(slippage_pct)]
+        pw = os.environ.get("TWAK_WALLET_PASSWORD")
+        if pw:
+            args += ["--password", pw]  # subprocess argv, not shell history
+        return self._run(*args)
 
     # -- x402 micropayments ---------------------------------------------------
     def x402_request(
@@ -213,7 +226,7 @@ class TwakRestClient:
             fromToken=from_token, toToken=to_token,
             fromChain=self.chain, toChain=self.chain,
             amount=f"{amount:.10f}".rstrip("0").rstrip("."),
-            slippage=slippage_pct,
+            slippage=str(slippage_pct),  # REST schema requires a string
         )
         return Quote(from_token, to_token, usd, raw)
 
@@ -224,21 +237,33 @@ class TwakRestClient:
             fromToken=from_token, toToken=to_token,
             fromChain=self.chain, toChain=self.chain,
             amount=f"{amount:.10f}".rstrip("0").rstrip("."),
-            slippage=slippage_pct,
+            slippage=str(slippage_pct),  # REST schema requires a string
         )
 
-    def swap(self, from_token: str, to_token: str, usd: float, slippage_pct: float) -> dict:
+    def swap(self, from_token: str, to_token: str, usd: float, slippage_pct: float,
+             amount: float | None = None) -> dict:
         if self.dry_run:
             log.info("[dry-run] swap %s->%s $%.2f: quote only, no tx", from_token, to_token, usd)
             return {"dry_run": True, "quote": self.quote(from_token, to_token, usd, slippage_pct).raw}
-        amount = self._amount_for_usd(from_token, usd)
-        return self._post(
-            "swap",
+        tokens = amount if amount is not None else self._amount_for_usd(from_token, usd)
+        amount_str = f"{tokens:.18f}".rstrip("0").rstrip(".")
+        payload = dict(
             fromToken=from_token, toToken=to_token,
             fromChain=self.chain, toChain=self.chain,
-            amount=f"{amount:.10f}".rstrip("0").rstrip("."),
-            slippage=slippage_pct,
+            amount=amount_str, slippage=str(slippage_pct),  # REST schema requires a string
         )
+        try:
+            return self._post("swap", **payload)
+        except TwakError as e:
+            # First swap of a token: the REST action fires the ERC-20/Permit2
+            # approval and the swap together, and the swap reverts if the
+            # approval hasn't confirmed yet ("check allowance before retrying").
+            # The allowance is now set, so one retry after it mines succeeds.
+            if not _is_approval_race(str(e)):
+                raise
+            log.warning("swap hit approval race; waiting for allowance and retrying once")
+            time.sleep(12)
+            return self._post("swap", **payload)
 
     # -- x402 micropayments ---------------------------------------------------
     def x402_request(self, url: str, max_payment_atomic: int, method: str = "GET",

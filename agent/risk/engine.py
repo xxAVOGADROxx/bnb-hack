@@ -27,6 +27,10 @@ class TradeProposal:
     expected_edge_pct: float
     is_entry: bool  # opening/increasing risk (vs closing / de-risking to stables)
     reason: str
+    # Exact token amount of from_token to sell (exits). When set, execution
+    # sells this on-chain amount instead of converting usd->amount, which
+    # avoids selling slightly more than held (a swap revert).
+    amount: float | None = None
 
 
 @dataclass(frozen=True)

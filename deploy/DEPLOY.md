@@ -3,14 +3,23 @@
 The agent must survive 7 days unattended. Two supported setups — **Docker
 Compose is the recommended one**; systemd is the no-docker fallback.
 
-In both setups the runtime is the same pair of processes:
-
-```
-twak serve --rest (localhost:3000, local signing)  <--REST-->  python -m agent
-```
+In both setups the runtime is a single process: `python -m agent`, which
+drives `twak` via the CLI. The CLI is the reliable execution path — `twak
+swap` sends the ERC-20/Permit2 approval AND waits for it to confirm before
+the swap, so first-time-token sells don't revert (the REST `swap` action
+fires both together and reverts on the approval race; validated live with the
+`--canary` round-trip). The wallet password comes from `TWAK_WALLET_PASSWORD`
+in `.env` (containers have no OS keychain).
 
 The agent reconciles positions from on-chain state on every start, so
 restarts are always safe: crash -> restart -> reconcile -> continue.
+
+Before the live week, validate the autonomous execution path end to end with
+one small real round-trip (buys then sells a $10 position, ends flat):
+
+```bash
+docker compose run --rm agent --live --canary
+```
 
 ## Prerequisites (on the server, once)
 
@@ -32,8 +41,9 @@ docker compose up -d --build     # builds and starts in DRY-RUN
 docker compose logs -f agent     # watch decisions live
 ```
 
-- `restart: unless-stopped` + the entrypoint supervisor = watchdog: if either
-  twak serve or the loop dies, the container exits and docker restarts both.
+- `restart: unless-stopped` = watchdog: if the agent dies, docker restarts it
+  and it reconciles from chain. `stop_grace_period` gives an in-flight swap
+  time to finish on `docker stop`.
 - Logs rotate (10 MB x 5). The decision audit trail is in `./data/decisions.jsonl`.
 - **Going live** (before the trading window): uncomment `command: ["--live"]`
   in docker-compose.yml, then `docker compose up -d`. Live mode is an
@@ -53,13 +63,13 @@ enabled: `systemctl enable docker`).
 
 ## Option B — systemd (no docker)
 
-Two units: `deploy/twak-serve.service` and `deploy/trading-agent.service`
-(the agent unit depends on the serve unit). Install:
+One unit: `deploy/trading-agent.service` (single agent process, CLI transport).
+Install:
 
 ```bash
-sudo cp deploy/twak-serve.service deploy/trading-agent.service /etc/systemd/system/
+sudo cp deploy/trading-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now twak-serve trading-agent
+sudo systemctl enable --now trading-agent
 journalctl -fu trading-agent
 ```
 

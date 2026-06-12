@@ -135,15 +135,17 @@ class Agent:
         )
         # Exit: sell whatever we just acquired, back to flat.
         portfolio, state = snapshot()
-        held = portfolio.usd_values.get(token, 0.0)
-        if held > 1.0:
+        held_usd = portfolio.usd_values.get(token, 0.0)
+        held_amount = portfolio.holdings.get(token)
+        if held_usd > 1.0:
             self.executor.execute(
-                TradeProposal(token, stable, held, 0.0, False, "canary exit (back to flat)"),
+                TradeProposal(token, stable, held_usd, 0.0, False,
+                              "canary exit (back to flat)", amount=held_amount),
                 portfolio_usd=portfolio.total_usd, state=state,
                 open_positions=portfolio.open_positions(self.cfg.tokens.stables), signal_age_min=0.0,
             )
         else:
-            log.warning("canary: no %s position to unwind (held $%.2f)", token, held)
+            log.warning("canary: no %s position to unwind (held $%.2f)", token, held_usd)
         portfolio, _ = snapshot()
         self.alerter.notify(f"🐤 canary done — portfolio ${portfolio.total_usd:.2f}, flat")
 
@@ -276,6 +278,8 @@ class Agent:
                 expected_edge_pct=sig.expected_move_pct,
                 is_entry=is_entry,
                 reason=sig.reason,
+                # Exits sell the exact on-chain token amount (avoids over-sell revert).
+                amount=None if is_entry else portfolio.holdings.get(token),
             )
             age_min = (datetime.now(timezone.utc) - signal_ts).total_seconds() / 60
             self.executor.execute(
@@ -293,7 +297,8 @@ class Agent:
             if sym in self.cfg.tokens.stables or usd <= 1.0:
                 continue
             self.executor.execute(
-                TradeProposal(sym, self.cfg.tokens.stables[0], usd, 0.0, False, "hard_stop flatten"),
+                TradeProposal(sym, self.cfg.tokens.stables[0], usd, 0.0, False,
+                              "hard_stop flatten", amount=portfolio.holdings.get(sym)),
                 portfolio_usd=portfolio.total_usd,
                 state=state,
                 open_positions=portfolio.open_positions(self.cfg.tokens.stables),

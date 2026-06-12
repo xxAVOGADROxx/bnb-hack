@@ -1,6 +1,6 @@
-# Agent runtime: node (for the twak CLI/serve) + python (the trading loop).
-# Both processes run in one container supervised by entrypoint.sh — if either
-# dies the container exits and docker's restart policy revives the pair.
+# Agent runtime: node (for the twak CLI) + python (the trading loop). The agent
+# drives twak via the CLI (reliable approval+swap handling); no long-running
+# twak server needed.
 FROM node:22-slim
 
 RUN apt-get update \
@@ -19,8 +19,7 @@ COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV PATH="/venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    TWAK_SERVE_URL=http://127.0.0.1:3000
+    PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/entrypoint.sh"]
 # Default: continuous DRY-RUN. Switch to --live in docker-compose.yml for

@@ -27,9 +27,11 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
 - **CMC for Agent** — every signal: market regime (Global Metrics, Fear &
   Greed), per-token technicals, upcoming macro events. Read-only: CMC thinks,
   TWAK executes.
-- **TWAK** — the *sole* execution layer, across **three surfaces** (CLI, REST
-  `twak serve`, and x402), all signed locally: balances, quotes, swaps,
-  competition registration, and x402 micropayments.
+- **TWAK** — the *sole* execution layer, all signed locally: balances, quotes,
+  swaps, competition registration. Production drives the **`twak` CLI** (it
+  sends and waits for the token approval before the swap, so first-time-token
+  sells don't revert) plus **x402** micropayments; a REST `twak serve` client
+  is also implemented (`agent/twak/client.py`).
 - **x402** — cost-aware premium data: in a grey-zone decision the agent pays
   per call for CMC's premium TA, settling in **USDC on BSC** (same chain it
   trades — no cross-chain bridge needed).
@@ -87,7 +89,7 @@ or systemd). See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for the full server
 setup and [`deploy/WINDOW.md`](deploy/WINDOW.md) for a bounded test window.
 
 ```bash
-docker compose up -d --build              # starts twak serve + agent, dry-run
+docker compose up -d --build              # starts the agent, dry-run
 docker compose run --rm agent --max-hours 6   # bounded test window
 ```
 
