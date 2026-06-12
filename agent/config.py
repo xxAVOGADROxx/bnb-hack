@@ -39,6 +39,10 @@ class RiskConfig:
     # Asymmetric regime gate (#4): under F&G extreme fear, entries run at half
     # scale and must clear this conviction floor (0 disables the floor).
     fear_conviction_floor: float = 0.50
+    # Liquidity sentinel (#7): exit when a held token's reference pool drains
+    # this far below the entry-time baseline (0 disables).
+    liquidity_exit_drop_pct: float = 40.0
+    liquidity_min_ref_usd: float = 100_000.0
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,10 @@ def load_config(dry_run: bool = True) -> AppConfig:
         regime_cache_min=int(r["data"]["regime_cache_min"]),
         fear_conviction_floor=float(
             (r.get("regime") or {}).get("fear_conviction_floor", 0.50)),
+        liquidity_exit_drop_pct=float(
+            (r.get("exits") or {}).get("liquidity_exit_drop_pct", 0.0)),
+        liquidity_min_ref_usd=float(
+            (r.get("exits") or {}).get("liquidity_min_ref_usd", 100_000.0)),
     )
     # The real watchlist is private: config/watchlist.local.yaml (gitignored)
     # overrides the empty placeholder committed to the public repo.

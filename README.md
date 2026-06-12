@@ -25,8 +25,10 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
 ## How the sponsor stack is used
 
 - **CMC for Agent** — every signal: market regime (Global Metrics, Fear &
-  Greed), per-token technicals, upcoming macro events. Read-only: CMC thinks,
-  TWAK executes.
+  Greed — live *and* historical, which calibrates the regime gate in the
+  backtest), per-token technicals, live quotes for the stop-loss, upcoming
+  macro events. The **CMC DEX API** adds pool-level liquidity monitoring (the
+  liquidity sentinel below). Read-only: CMC thinks, TWAK executes.
 - **TWAK** — the *sole* execution layer, all signed locally: balances, quotes,
   swaps, competition registration. Production drives the **`twak` CLI** (it
   sends and waits for the token approval before the swap, so first-time-token
@@ -46,6 +48,7 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
 | Risk engine | `agent/risk/engine.py` | Fail-closed guardrails: allowlist, drawdown ladder, caps, slippage, min-edge |
 | Execution | `agent/execution/executor.py` | Quote → price-impact check → swap via TWAK, by contract address |
 | State / reconcile | `agent/state/` | Rebuilds positions from on-chain truth every cycle (restart-safe) |
+| Liquidity sentinel | `agent/risk/liquidity.py` | CMC DEX API pool monitoring → defensive exit on a liquidity drain |
 | Self-monitor | `agent/monitor/snapshot.py` | Hourly snapshot + drawdown, measured like the judge does |
 | Leaderboard | `agent/monitor/leaderboard.py` | Read-only competitor ranking via contract events + Multicall3 |
 | x402 | `agent/x402/premium.py` | Pay-per-call CMC premium TA tie-break (BSC USDC) |
@@ -61,6 +64,9 @@ to `data/decisions.jsonl`. The risk engine is **fail-closed**:
 - hard allowlist of the eligible tokens; anything else is rejected
 - per-trade and per-day limits, max position size, max concurrent positions
 - slippage + price-impact rejection on every swap; stale-data gate
+- **liquidity sentinel**: a held token's DEX pool draining ≥40% below its
+  entry baseline forces a defensive exit (rug/LP-migration protection,
+  CMC DEX API + deterministic CREATE2 pool derivation)
 - ≥1 trade/day compliance automation and a portfolio-floor check every cycle
 - **restart-safe** (reconcile from chain) and **clean shutdown** (finishes the
   in-flight cycle, exits with no pending transaction)
@@ -76,7 +82,7 @@ python -m agent --once     # one DRY-RUN cycle (real signals, no tx signed)
 python -m agent            # continuous dry-run
 python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
-pytest -q                  # 46 tests
+pytest -q                  # 51 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)

@@ -97,3 +97,16 @@ class StateStore:
     def clear_entry(self, token: str) -> None:
         if (self._state.get("entry_prices") or {}).pop(token, None) is not None:
             self._save()
+
+    # -- liquidity sentinel baselines (#7) ------------------------------------
+    def pool_baseline(self, token: str) -> dict | None:
+        return (self._state.get("pool_baselines") or {}).get(token)
+
+    def record_pool_baseline(self, token: str, pool: str | None, liq: float) -> None:
+        # pool=None is meaningful: the token has no covered reference pool.
+        self._state.setdefault("pool_baselines", {})[token] = {"pool": pool, "liq": liq}
+        self._save()
+
+    def clear_pool_baseline(self, token: str) -> None:
+        if (self._state.get("pool_baselines") or {}).pop(token, None) is not None:
+            self._save()

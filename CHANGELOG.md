@@ -6,6 +6,20 @@ directional, the *relative* comparisons as the signal.
 
 ## Strategy model
 
+### Liquidity sentinel — CMC DEX API pool monitoring (#7)
+- New guardrail for the tail risk every price-based exit lags: **liquidity
+  draining out of the pool** (rug, LP migration, panic withdrawal). On entry
+  the agent records the token's reference-pool liquidity (CMC **DEX API**,
+  pool-level USD liquidity); every cycle a held token's pool is re-checked and
+  a ≥40% drain below the entry baseline forces a defensive exit
+  (`liquidity_exit` in the decision log).
+- Reference pools are derived **deterministically** (PancakeSwap v2 CREATE2:
+  factory + keccak256, unit-tested against the canonical CAKE/WBNB pool)
+  because the DEX API's discovery endpoint ignores its documented filters.
+  Tokens without a ≥$100k v2 reference pool (ZEC, BCH — their depth lives on
+  other venues the execution aggregator routes through) are *uncovered*:
+  fail-open, logged once, no forced action. 10/12 watchlist tokens covered.
+
 ### Asymmetric regime gate, calibrated on real Fear & Greed (#4)
 - The v1 gate was a placeholder: F&G extreme (≤20 or ≥80) → no entries at all,
   symmetric. A 12h dry-run (12 jun) spent the **entire window in extreme fear**:

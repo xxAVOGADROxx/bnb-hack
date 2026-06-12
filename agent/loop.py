@@ -21,6 +21,7 @@ from agent.execution.executor import Executor
 from agent.logger import DecisionLog
 from agent.monitor.snapshot import maybe_snapshot
 from agent.risk.engine import RiskEngine, RiskState, TradeProposal
+from agent.risk.liquidity import LiquiditySentinel
 from agent.risk.macro import MacroCalendar
 from agent.signals import regime as regime_mod
 from agent.signals import technical
@@ -52,6 +53,11 @@ class Agent:
         self.alerter = Alerter(cfg.telegram_bot_token, cfg.telegram_chat_id)
         self.registry = TokenRegistry()
         self.macro = MacroCalendar()
+        self.sentinel = LiquiditySentinel(
+            self.cmc, self.store,
+            min_ref_usd=cfg.risk.liquidity_min_ref_usd,
+            exit_drop_pct=cfg.risk.liquidity_exit_drop_pct,
+        ) if cfg.risk.liquidity_exit_drop_pct > 0 else None
         self.executor = Executor(
             self.twak, self.risk, self.store, self.decisions,
             cfg.risk.max_slippage_pct, registry=self.registry, alerter=self.alerter,
@@ -242,6 +248,7 @@ class Agent:
                 continue
             holding = portfolio.usd_values.get(token, 0.0) > 1.0
             price = float(closes[-1])
+            addr = self.registry.addresses.get(token)
 
             # Stop-loss (#3): a hard floor below the signal exit. Track the
             # entry price (the chain can't tell us our cost basis); if a holding
@@ -277,9 +284,36 @@ class Agent:
                     )
                     if r is not None:
                         self.store.clear_entry(token)
+                        if self.sentinel:
+                            self.sentinel.clear(token)
                     continue
+                # Liquidity sentinel (#7): the pool draining is the one tail
+                # risk price-based exits lag — check it independently.
+                if self.sentinel and addr:
+                    verdict = self.sentinel.check(token, addr)
+                    if verdict and verdict.exit_now:
+                        log.warning("%s liquidity sentinel: %s", token, verdict.detail)
+                        self.decisions.append(
+                            "liquidity_exit", token=token,
+                            drop_pct=verdict.drop_pct, detail=verdict.detail)
+                        r = self.executor.execute(
+                            TradeProposal(token, stable,
+                                          portfolio.usd_values.get(token, 0.0),
+                                          0.0, False,
+                                          f"liquidity drain {verdict.drop_pct:.0f}%",
+                                          amount=portfolio.holdings.get(token)),
+                            portfolio_usd=portfolio.total_usd, state=state,
+                            open_positions=portfolio.open_positions(self.cfg.tokens.stables),
+                            signal_age_min=0.0,
+                        )
+                        if r is not None:
+                            self.store.clear_entry(token)
+                            self.sentinel.clear(token)
+                        continue
             elif self.store.entry_price(token) is not None:
                 self.store.clear_entry(token)  # no longer holding -> forget cost basis
+                if self.sentinel:
+                    self.sentinel.clear(token)
 
             sig = technical.evaluate(token, closes, holding=holding)
             self.decisions.append(
@@ -344,11 +378,15 @@ class Agent:
                 open_positions=portfolio.open_positions(self.cfg.tokens.stables),
                 signal_age_min=age_min,
             )
-            if r is not None:  # track cost basis for the stop-loss
+            if r is not None:  # track cost basis (stop-loss) + pool baseline (#7)
                 if is_entry:
                     self.store.record_entry(token, price)
+                    if self.sentinel and addr:
+                        self.sentinel.on_entry(token, addr)
                 else:
                     self.store.clear_entry(token)
+                    if self.sentinel:
+                        self.sentinel.clear(token)
 
     def _flatten_to_stables(self, portfolio, state: RiskState) -> None:
         """Hard stop: close every non-stable position into the primary stable."""

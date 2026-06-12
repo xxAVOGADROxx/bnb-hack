@@ -139,6 +139,32 @@ class CMCClient:
         # TODO: confirm exact path against https://pro.coinmarketcap.com/llms.txt
         return self._get("/v3/fear-and-greed/latest", ttl_s=ttl_s)
 
+    # -- DEX API (pool-level, BSC) ------------------------------------------
+    def dex_pair_quotes_latest(
+        self, pool_addresses: list[str], ttl_s: int = 240
+    ) -> dict[str, dict]:
+        """CMC DEX API: {pool_address (lowercase): USD quote dict} with real
+        pool `liquidity`. network_id 14 = BSC; batched (1 credit per pool).
+
+        NOTE (verified 12 jun): the DEX *discovery* endpoint
+        /v4/dex/spot-pairs/latest ignores all its documented filters
+        (base_asset_contract_address, limit, ...) and returns an unfiltered
+        firehose — pools must be derived deterministically (CREATE2, see
+        agent/risk/liquidity.py) and quoted directly here instead.
+        """
+        data = self._get(
+            "/v4/dex/pairs/quotes/latest",
+            {"network_id": 14, "contract_address": ",".join(pool_addresses)},
+            ttl_s=ttl_s,
+        )
+        out: dict[str, dict] = {}
+        for d in data if isinstance(data, list) else []:
+            q = d.get("quote")
+            q = q[0] if isinstance(q, list) and q else q
+            if isinstance(q, dict) and d.get("contract_address"):
+                out[str(d["contract_address"]).lower()] = q
+        return out
+
     # -- credit guardrail ---------------------------------------------------
     def key_info(self) -> dict:
         return self._get("/v1/key/info")
