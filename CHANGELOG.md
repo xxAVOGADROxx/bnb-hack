@@ -127,6 +127,19 @@ directional, the *relative* comparisons as the signal.
 
 ## Infrastructure
 
+### The agent charges x402, not just pays it (#8)
+- New x402 V2 **server** (`agent/x402/server.py`): sells the read-only
+  competition leaderboard at 0.01 USD1/call. Speaks the same dialect as CMC's
+  x402 MCP (402 + base64 `payment-required`, `exact`/eip155:56/eip3009), so
+  `twak x402 request` pays it with zero client work. EIP-712 signature
+  verified off-chain; settlement submitted on-chain by the agent
+  (`transferWithAuthorization` — the token's authorization nonce makes
+  replays impossible). Validated end-to-end with a REAL self-payment:
+  twak signed, the server verified + settled on BSC, and returned the data.
+- Settlement signer reuses the in-memory key pattern (`agent/keys.py`,
+  shared with the ERC-8004 registration): TWAK's keystore stays the single
+  source of truth, address always verified before use, nothing on disk.
+
 ### On-chain agent identity (ERC-8004, BNB AI Agent SDK)
 - The agent is registered in the ERC-8004 identity registry on BSC testnet:
   **agentId 1375**, minted to the same wallet that trades on mainnet, with

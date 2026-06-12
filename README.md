@@ -34,9 +34,12 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
   sends and waits for the token approval before the swap, so first-time-token
   sells don't revert) plus **x402** micropayments; a REST `twak serve` client
   is also implemented (`agent/twak/client.py`).
-- **x402** — cost-aware premium data: in a grey-zone decision the agent pays
-  per call for CMC's premium TA, settling in **USDC on BSC** (same chain it
-  trades — no cross-chain bridge needed).
+- **x402** — both sides of the protocol. The agent **pays**: in a grey-zone
+  decision it buys CMC's premium TA per call. And it **charges**: a built-in
+  x402 V2 server (`python -m agent.x402.server`) sells the agent's live
+  competition leaderboard per call — 402 challenge, EIP-3009 signature
+  verified off-chain, settled on-chain on BSC. Any compliant client pays it
+  out of the box (`twak x402 request <url>/leaderboard`).
 - **BNB AI Agent SDK** — the agent has an **on-chain ERC-8004 identity**
   (agentId **1375**, BSC testnet registry `0x8004...BD9e`), minted to the same
   wallet that trades on mainnet. Registered self-custodially: the script

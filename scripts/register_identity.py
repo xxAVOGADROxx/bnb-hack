@@ -22,7 +22,6 @@ Writes the public result (agentId, tx, uri) to data/identity.json.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -30,15 +29,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from Crypto.Cipher import AES  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
-from eth_account import Account  # noqa: E402
 
 from agent.config import DATA_DIR, ROOT  # noqa: E402
-
-AGENT_WALLET = "0x44dD4C2c353457fF68b164934870BB0391f9251C"
-TWAK_WALLET = Path.home() / ".twak" / "wallet.json"
-PBKDF2_ITERS = 600_000
+from agent.keys import AGENT_WALLET, agent_account  # noqa: E402
 
 AGENT_NAME = "bnb-hack-1337"
 AGENT_DESCRIPTION = (
@@ -46,17 +40,6 @@ AGENT_DESCRIPTION = (
     "-> deterministic strategy + fail-closed risk engine -> Trust Wallet "
     "Agent Kit local signing. BNB Hack: AI Trading Agent Edition."
 )
-
-
-def decrypt_mnemonic(password: str) -> str:
-    """TWAK keystore scheme: PBKDF2-SHA256(600k) -> AES-256-GCM. In memory."""
-    d = json.loads(TWAK_WALLET.read_text())
-    key = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), bytes.fromhex(d["salt"]), PBKDF2_ITERS, 32)
-    cipher = AES.new(key, AES.MODE_GCM, nonce=bytes.fromhex(d["iv"]))
-    plain = cipher.decrypt_and_verify(
-        bytes.fromhex(d["encryptedMnemonic"]), bytes.fromhex(d["authTag"]))
-    return plain.decode()
 
 
 def main() -> None:
@@ -70,11 +53,7 @@ def main() -> None:
     if not password:
         raise SystemExit("TWAK_WALLET_PASSWORD missing from .env")
 
-    Account.enable_unaudited_hdwallet_features()
-    acct = Account.from_mnemonic(decrypt_mnemonic(password))
-    if acct.address.lower() != AGENT_WALLET.lower():
-        raise SystemExit(
-            f"derived {acct.address} != competition wallet {AGENT_WALLET} — abort")
+    acct = agent_account(password)  # decrypts in memory + verifies the address
     print(f"key verified: derives the competition wallet {acct.address}")
     if args.dry_run:
         print("dry-run: stopping before any chain interaction")
