@@ -37,6 +37,11 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
 - **x402** — cost-aware premium data: in a grey-zone decision the agent pays
   per call for CMC's premium TA, settling in **USDC on BSC** (same chain it
   trades — no cross-chain bridge needed).
+- **BNB AI Agent SDK** — the agent has an **on-chain ERC-8004 identity**
+  (agentId **1375**, BSC testnet registry `0x8004...BD9e`), minted to the same
+  wallet that trades on mainnet. Registered self-custodially: the script
+  decrypts TWAK's local keystore *in memory*, verifies the derived address,
+  and signs — no raw key ever touches disk (`scripts/register_identity.py`).
 
 ## Architecture
 
@@ -116,6 +121,9 @@ matured (with backtest evidence for each model change).
 - Chain: **BSC mainnet**. Execution: spot swaps via TWAK (non-custodial DEX).
 - Agent wallet: `0x44dD4C2c353457fF68b164934870BB0391f9251C`
 - Competition contract: `0x212c61b9b72c95d95bf29cf032f5e5635629aed5`
+- ERC-8004 identity: agentId **1375** on BSC testnet
+  (registry `0x8004A818BFB912233c491871b3d84c89A494BD9e`, tx
+  `0xe544f78d748a170134ccd3402257597759c7fb480066ddd8d3f3e5f34e86b5ad`)
 
 ## Security
 

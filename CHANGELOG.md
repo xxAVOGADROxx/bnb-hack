@@ -126,6 +126,20 @@ directional, the *relative* comparisons as the signal.
   regenerable reference data).
 
 ## Infrastructure
+
+### On-chain agent identity (ERC-8004, BNB AI Agent SDK)
+- The agent is registered in the ERC-8004 identity registry on BSC testnet:
+  **agentId 1375**, minted to the same wallet that trades on mainnet, with
+  competition + mainnet-wallet metadata on-chain. Gas-free via the MegaFuel
+  paymaster. Registration is self-custody-consistent:
+  `scripts/register_identity.py` decrypts TWAK's local keystore **in memory**
+  (PBKDF2-600k + AES-GCM), verifies the derived address equals the competition
+  wallet before any chain interaction, and hands the key to the SDK with
+  `persist=False` — `~/.twak` remains the single source of truth. All three
+  sponsor stacks are now in use: CMC (signal) + TWAK (execution) + BNB SDK
+  (identity).
+- `--flatten` one-shot: close every position into USDT (end of the
+  competition window locks the judged result; also an emergency de-risk).
 - Docker deploy (single agent process, CLI transport, restart watchdog,
   `stop_grace_period`); read-only leaderboard monitor; macro-event blackout
   calendar; Telegram tx + hourly balance notifications; competition registered
