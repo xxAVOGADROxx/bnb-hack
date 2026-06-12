@@ -21,6 +21,9 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run a single cycle and exit")
     parser.add_argument("--max-hours", type=float, default=None,
                         help="stop cleanly after N hours (bounded test window)")
+    parser.add_argument("--canary", action="store_true",
+                        help="do one small real round-trip to validate the live "
+                             "execution path, then exit (use with --live)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -31,6 +34,9 @@ def main() -> None:
     # exit with no pending tx. Covers `docker stop` (SIGTERM) and Ctrl-C (SIGINT).
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, agent.request_stop)
+    if args.canary:
+        agent.canary_roundtrip()
+        return
     agent.run(once=args.once, max_hours=args.max_hours)
 
 

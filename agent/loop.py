@@ -109,6 +109,44 @@ class Agent:
         self.alerter.notify("🛑 agent stopped cleanly — no pending transactions")
         log.info("agent stopped cleanly")
 
+    # -- canary (pre-week live validation) -----------------------------------
+    def canary_roundtrip(self, token: str = "CAKE", usd: float = 10.0) -> None:
+        """One small REAL round-trip through the full executor path, to prove
+        autonomous signing end-to-end before the live week. Buys then sells the
+        same token so it ends flat. Bypasses the regime gate (TEST ONLY) but
+        keeps every other guardrail; fully logged + alerted. Tiny by design —
+        friction (~1.4% of $10 ≈ $0.15) is the cost of the validation."""
+        self.registry.ensure_id_map(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        self.registry.ensure_addresses(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        stable = self.cfg.tokens.stables[0]
+        self.alerter.notify(f"🐤 canary: real round-trip {stable}->{token}->{stable} ${usd:.0f} (live path test)")
+
+        def snapshot():
+            p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+            st = self.risk.drawdown_state(p.total_usd, p.total_usd)
+            return p, st
+
+        portfolio, state = snapshot()
+        # Entry: stable -> token. edge above the min-edge floor so risk passes.
+        self.executor.execute(
+            TradeProposal(stable, token, usd, 3.0, True, "canary entry (live path test)"),
+            portfolio_usd=portfolio.total_usd, state=state,
+            open_positions=portfolio.open_positions(self.cfg.tokens.stables), signal_age_min=0.0,
+        )
+        # Exit: sell whatever we just acquired, back to flat.
+        portfolio, state = snapshot()
+        held = portfolio.usd_values.get(token, 0.0)
+        if held > 1.0:
+            self.executor.execute(
+                TradeProposal(token, stable, held, 0.0, False, "canary exit (back to flat)"),
+                portfolio_usd=portfolio.total_usd, state=state,
+                open_positions=portfolio.open_positions(self.cfg.tokens.stables), signal_age_min=0.0,
+            )
+        else:
+            log.warning("canary: no %s position to unwind (held $%.2f)", token, held)
+        portfolio, _ = snapshot()
+        self.alerter.notify(f"🐤 canary done — portfolio ${portfolio.total_usd:.2f}, flat")
+
     # -- one cycle --------------------------------------------------------------
     def cycle(self) -> None:
         now = datetime.now(timezone.utc)
