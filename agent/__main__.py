@@ -24,12 +24,16 @@ def main() -> None:
     parser.add_argument("--canary", action="store_true",
                         help="do one small real round-trip to validate the live "
                              "execution path, then exit (use with --live)")
+    parser.add_argument("--paper-equity", type=float, default=0.0,
+                        help="DRY-RUN ONLY: size entries as if the portfolio "
+                             "were this big, so test windows exercise the full "
+                             "entry path (proposal -> risk engine -> quote)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     setup_logging(logging.DEBUG if args.verbose else logging.INFO)
     cfg = load_config(dry_run=not args.live)
-    agent = Agent(cfg)
+    agent = Agent(cfg, paper_equity=args.paper_equity if not args.live else 0.0)
     # Clean shutdown: finish the in-flight cycle (any swap is synchronous), then
     # exit with no pending tx. Covers `docker stop` (SIGTERM) and Ctrl-C (SIGINT).
     for sig in (signal.SIGTERM, signal.SIGINT):

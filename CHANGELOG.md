@@ -96,6 +96,18 @@ directional, the *relative* comparisons as the signal.
 
 ## Execution & deployment
 
+### Test-window fidelity: dry-run mirrors live
+- **Dry-run trades now count toward the daily ledger.** They didn't, so the
+  20:00 UTC compliance trade retried every cycle in test windows (live was
+  unaffected: real trades were always recorded). Dry-run now exercises the
+  same cadence rules (compliance once, daily cap) as live.
+- **`--paper-equity N` (dry-run only):** sizes entries as if the portfolio
+  were $N, so a test window exercises the full entry path — proposal → risk
+  engine verdict → quote. With tiny test capital every entry silently died at
+  the $10 minimum (12 jun 2h window: DOGE/FLOKI cleared both regime gates and
+  never reached the risk engine). That skip is now logged
+  (`entry_skipped / below_min_size`). Live sizing always uses on-chain truth.
+
 ### Reliable live execution (canary-validated)
 - Exits sell the **exact on-chain token amount** (not a USD-derived amount that
   could oversell and revert). Execution uses the **`twak` CLI transport**, which

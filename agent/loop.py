@@ -43,8 +43,13 @@ REGIME_SCALE = {
 
 
 class Agent:
-    def __init__(self, cfg: AppConfig):
+    def __init__(self, cfg: AppConfig, paper_equity: float = 0.0):
         self.cfg = cfg
+        # Dry-run only: pretend the portfolio is this big for entry SIZING, so
+        # a test window exercises proposal -> risk engine -> quote end to end
+        # (with tiny test capital, every entry dies at the $10 floor instead).
+        # Drawdown, snapshots and exits always use the real on-chain value.
+        self.paper_equity = paper_equity if cfg.dry_run else 0.0
         self.cmc = CMCClient(cfg.cmc_api_key)
         self.twak = make_twak_client(chain=cfg.chain, dry_run=cfg.dry_run)
         self.store = StateStore()
@@ -236,6 +241,8 @@ class Agent:
     ) -> None:
         scale = REGIME_SCALE[view.regime] * macro_scale
         stable = self.cfg.tokens.stables[0]
+        # paper_equity is 0 outside dry-run: live always sizes on-chain truth.
+        equity = max(portfolio.total_usd, self.paper_equity)
         for token in self.cfg.tokens.watchlist:
             cmc_id = self.registry.cmc_id(token)
             if cmc_id is None:
@@ -354,11 +361,15 @@ class Agent:
                 # volatility-targeting multiplier (#2, risk parity).
                 vmult = technical.vol_mult(
                     sig.daily_range_pct, self.cfg.risk.vol_target_pct, self.cfg.risk.vol_floor)
-                usd = (portfolio.total_usd * self.cfg.risk.max_position_pct / 100
+                usd = (equity * self.cfg.risk.max_position_pct / 100
                        * scale * sig.conviction * vmult)
             else:
                 usd = portfolio.usd_values.get(token, 0.0)
             if usd < 10.0:
+                if is_entry:  # visible, not a silent skip (tiny capital lands here)
+                    self.decisions.append(
+                        "entry_skipped", token=token, rule="below_min_size",
+                        usd=round(usd, 2))
                 continue
             proposal = TradeProposal(
                 from_token=stable if is_entry else token,
@@ -373,7 +384,7 @@ class Agent:
             age_min = (datetime.now(timezone.utc) - signal_ts).total_seconds() / 60
             r = self.executor.execute(
                 proposal,
-                portfolio_usd=portfolio.total_usd,
+                portfolio_usd=equity,  # == real total outside dry-run
                 state=state,
                 open_positions=portfolio.open_positions(self.cfg.tokens.stables),
                 signal_age_min=age_min,

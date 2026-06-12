@@ -110,8 +110,10 @@ class Executor:
             return None
 
         tx_hash = result.get("hash") or result.get("txHash")
+        # Record simulated trades too: dry-run must mirror live cadence
+        # (compliance + daily caps), or it retries the same trade every cycle.
+        self.store.record_trade(now)
         if not result.get("dry_run"):
-            self.store.record_trade(now)
             # TODO(server): post-swap verification — confirm the balance delta
             # matches the quote within tolerance; alert on mismatch.
             if self.alerter:
