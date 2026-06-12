@@ -84,3 +84,16 @@ class StateStore:
         day = _utc_date(now)
         self._state["trades_by_day"][day] = self._state["trades_by_day"].get(day, 0) + 1
         self._save()
+
+    # -- entry prices (for the stop-loss; chain can't tell us our cost basis) --
+    def entry_price(self, token: str) -> float | None:
+        v = (self._state.get("entry_prices") or {}).get(token)
+        return float(v) if v is not None else None
+
+    def record_entry(self, token: str, price: float) -> None:
+        self._state.setdefault("entry_prices", {})[token] = price
+        self._save()
+
+    def clear_entry(self, token: str) -> None:
+        if (self._state.get("entry_prices") or {}).pop(token, None) is not None:
+            self._save()

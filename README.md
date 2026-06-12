@@ -93,6 +93,11 @@ docker compose up -d --build              # starts the agent, dry-run
 docker compose run --rm agent --max-hours 6   # bounded test window
 ```
 
+## Evolution
+
+See [`CHANGELOG.md`](CHANGELOG.md) for how the strategy and execution have
+matured (with backtest evidence for each model change).
+
 ## Configuration
 
 - `config/risk.yaml` — every guardrail threshold (enforced + logged).

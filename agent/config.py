@@ -25,6 +25,9 @@ class RiskConfig:
     drawdown: DrawdownConfig
     max_position_pct: float
     max_concurrent: int
+    vol_target_pct: float
+    vol_floor: float
+    stop_loss_pct: float
     max_trades_per_day: int
     max_slippage_pct: float
     min_expected_edge_pct: float
@@ -71,6 +74,9 @@ def load_config(dry_run: bool = True) -> AppConfig:
         ),
         max_position_pct=float(r["position"]["max_position_pct"]),
         max_concurrent=int(r["position"]["max_concurrent"]),
+        vol_target_pct=float(r["position"].get("vol_target_pct", 0.0)),
+        vol_floor=float(r["position"].get("vol_floor", 0.5)),
+        stop_loss_pct=float((r.get("exits") or {}).get("stop_loss_pct", 0.0)),
         max_trades_per_day=int(r["limits"]["max_trades_per_day"]),
         max_slippage_pct=float(r["limits"]["max_slippage_pct"]),
         min_expected_edge_pct=float(r["limits"]["min_expected_edge_pct"]),

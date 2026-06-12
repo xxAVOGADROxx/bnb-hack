@@ -240,6 +240,34 @@ class Agent:
                 log.warning("no series for %s (%s) — skipping", token, e)
                 continue
             holding = portfolio.usd_values.get(token, 0.0) > 1.0
+            price = float(closes[-1])
+
+            # Stop-loss (#3): a hard floor below the signal exit. Track the
+            # entry price (the chain can't tell us our cost basis); if a holding
+            # falls past the stop, cut it now — don't wait for the EMA signal.
+            if holding:
+                entry_px = self.store.entry_price(token)
+                if entry_px is None:
+                    self.store.record_entry(token, price)  # restart: adopt, no spurious stop
+                elif (self.cfg.risk.stop_loss_pct > 0
+                      and price <= entry_px * (1 - self.cfg.risk.stop_loss_pct / 100)):
+                    loss = (price / entry_px - 1) * 100
+                    log.info("%s stop-loss: %.1f%% from entry", token, loss)
+                    self.decisions.append("stop_loss", token=token, loss_pct=round(loss, 2))
+                    r = self.executor.execute(
+                        TradeProposal(token, stable, portfolio.usd_values.get(token, 0.0),
+                                      0.0, False, f"stop-loss {loss:.1f}%",
+                                      amount=portfolio.holdings.get(token)),
+                        portfolio_usd=portfolio.total_usd, state=state,
+                        open_positions=portfolio.open_positions(self.cfg.tokens.stables),
+                        signal_age_min=0.0,
+                    )
+                    if r is not None:
+                        self.store.clear_entry(token)
+                    continue
+            elif self.store.entry_price(token) is not None:
+                self.store.clear_entry(token)  # no longer holding -> forget cost basis
+
             sig = technical.evaluate(token, closes, holding=holding)
             self.decisions.append(
                 "signal", token=token, action=sig.action.value,
@@ -264,11 +292,15 @@ class Agent:
             is_entry = sig.action == technical.Action.BUY or premium_entry
             if is_entry and (holding or scale == 0.0):
                 continue
-            usd = (
-                portfolio.total_usd * self.cfg.risk.max_position_pct / 100
-                * scale * sig.conviction
-                if is_entry else portfolio.usd_values.get(token, 0.0)
-            )
+            if is_entry:
+                # Sizing = position cap x regime scale x conviction (#1) x the
+                # volatility-targeting multiplier (#2, risk parity).
+                vmult = technical.vol_mult(
+                    sig.daily_range_pct, self.cfg.risk.vol_target_pct, self.cfg.risk.vol_floor)
+                usd = (portfolio.total_usd * self.cfg.risk.max_position_pct / 100
+                       * scale * sig.conviction * vmult)
+            else:
+                usd = portfolio.usd_values.get(token, 0.0)
             if usd < 10.0:
                 continue
             proposal = TradeProposal(
@@ -282,13 +314,18 @@ class Agent:
                 amount=None if is_entry else portfolio.holdings.get(token),
             )
             age_min = (datetime.now(timezone.utc) - signal_ts).total_seconds() / 60
-            self.executor.execute(
+            r = self.executor.execute(
                 proposal,
                 portfolio_usd=portfolio.total_usd,
                 state=state,
                 open_positions=portfolio.open_positions(self.cfg.tokens.stables),
                 signal_age_min=age_min,
             )
+            if r is not None:  # track cost basis for the stop-loss
+                if is_entry:
+                    self.store.record_entry(token, price)
+                else:
+                    self.store.clear_entry(token)
 
     def _flatten_to_stables(self, portfolio, state: RiskState) -> None:
         """Hard stop: close every non-stable position into the primary stable."""

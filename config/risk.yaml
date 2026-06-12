@@ -10,6 +10,17 @@ drawdown:                  # measured from high-water mark, hourly snapshots
 position:
   max_position_pct: 25.0   # max single position, % of portfolio value
   max_concurrent: 3
+  # Volatility-targeted sizing (#2, risk parity): scale a position DOWN when the
+  # token's avg daily range exceeds the target, so each risks a similar budget.
+  # Backtest: cuts max drawdown ~37% with equal/better return. 0 disables.
+  vol_target_pct: 5.0
+  vol_floor: 0.5           # never shrink a position below 50% of its base size
+
+exits:
+  # Hard stop-loss (#3): cut a position that falls this far from its entry — a
+  # backstop below the EMA-loss signal exit, protecting the DQ gate against a
+  # fast gap-down between cycles. 0 disables.
+  stop_loss_pct: 8.0
 
 limits:
   max_trades_per_day: 4    # anti-overtrading: friction eats returns

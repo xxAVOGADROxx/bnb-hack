@@ -66,10 +66,11 @@ DEFAULT_PARAMS = SignalParams()
 class Signal:
     token: str
     action: Action
-    conviction: float        # 0..1
+    conviction: float        # 0..1 — position-size weight
     grey_zone: bool          # True -> candidate for the x402 premium branch
-    expected_move_pct: float # recent average daily range, scaled by conviction
+    expected_move_pct: float # conservative edge estimate for the min-edge gate
     reason: str
+    daily_range_pct: float = 0.0  # raw avg daily range — drives vol-targeted sizing
 
 
 def ema(s: pd.Series, span: int) -> pd.Series:
@@ -91,6 +92,16 @@ def macd(closes: pd.Series, fast: int, slow: int, signal: int) -> tuple[pd.Serie
 
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
+
+
+def vol_mult(daily_range_pct: float, vol_target_pct: float, vol_floor: float = 0.5) -> float:
+    """Risk-parity sizing multiplier: scale a position DOWN when the token is
+    more volatile than the target daily range, so each position contributes a
+    similar risk budget (protects the drawdown gate). 1.0 at/below target,
+    shrinking above it, never above 1.0. vol_target_pct<=0 disables."""
+    if vol_target_pct <= 0 or daily_range_pct <= 0:
+        return 1.0
+    return max(vol_floor, min(1.0, vol_target_pct / daily_range_pct))
 
 
 def conviction_score(
@@ -172,10 +183,10 @@ def evaluate(
 
     if met == 4:
         return Signal(token, Action.BUY, conviction, False,
-                      edge, f"entry: {detail} {drv}")
+                      edge, f"entry: {detail} {drv}", daily_range_pct=move)
     if met == 3:
         # 3/4 grey-zone candidate for the x402 tie-break; sized smaller.
         grey_conv = conviction * params.grey_conviction_mult
         return Signal(token, Action.HOLD, grey_conv, True,
-                      edge, f"grey zone (3/4): {detail} {drv}")
-    return Signal(token, Action.HOLD, 0.0, False, move, detail)
+                      edge, f"grey zone (3/4): {detail} {drv}", daily_range_pct=move)
+    return Signal(token, Action.HOLD, 0.0, False, move, detail, daily_range_pct=move)

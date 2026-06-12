@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agent.cmc.client import CMCClient, CMCError  # noqa: E402
 from agent.config import DATA_DIR, load_config  # noqa: E402
 from agent.signals.technical import (  # noqa: E402
-    DEFAULT_PARAMS, Action, SignalParams, evaluate,
+    DEFAULT_PARAMS, Action, SignalParams, evaluate, vol_mult,
 )
 from agent.tokens import TokenRegistry  # noqa: E402
 
@@ -76,59 +76,76 @@ def precompute_signals(closes: dict[str, list[float]], params: SignalParams):
         flags = []
         for t in range(len(series)):
             if t < WARMUP:
-                flags.append((None, False, 0.0))
+                flags.append((None, False, 0.0, 0.0))
                 continue
             window = series[: t + 1]
             flat = evaluate(tok, window, holding=False, params=params)
             held = evaluate(tok, window, holding=True, params=params)
             entry = flat.conviction if flat.action == Action.BUY else None
-            flags.append((entry, held.action == Action.SELL, flat.expected_move_pct))
+            flags.append((entry, held.action == Action.SELL,
+                          flat.expected_move_pct, flat.daily_range_pct))
         out[tok] = flags
     return out
 
 
+
+
 def simulate(closes: dict[str, list[float]], signals, n_bars: int,
-             round_trip_pct: float, min_edge_pct: float = 0.0):
+             round_trip_pct: float, min_edge_pct: float = 0.0,
+             stop_loss_pct: float = 0.0, vol_target: float = 0.0,
+             vol_floor: float = 0.5):
     leg = round_trip_pct / 2 / 100
-    cash, positions = START_EQUITY, {}  # tok -> qty
+    cash, positions = START_EQUITY, {}  # tok -> {qty, entry_px}
     trades, equity_curve = [], []
     hwm, max_dd = 0.0, 0.0
 
+    def close_position(tok, px, label):
+        pos = positions.pop(tok)
+        proceeds = pos["qty"] * px * (1 - leg)
+        nonlocal cash
+        cash += proceeds
+        tr = trades[-_open_idx(trades, tok)]
+        tr["exit_usd"] = proceeds
+        tr["exit_reason"] = label
+
     for t in range(n_bars):
-        # exits first
+        # exits first: stop-loss (cut losers) takes priority over the signal exit
         for tok in list(positions):
-            entry_conv, exit_flag, _ = signals[tok][t]
-            if exit_flag:
-                px = closes[tok][t]
-                proceeds = positions.pop(tok) * px * (1 - leg)
-                cash += proceeds
-                trades[-_open_idx(trades, tok)]["exit_usd"] = proceeds  # close last open
-        equity = cash + sum(q * closes[tok][t] for tok, q in positions.items())
+            _, exit_flag, _, _ = signals[tok][t]
+            px = closes[tok][t]
+            stopped = stop_loss_pct > 0 and px <= positions[tok]["entry_px"] * (1 - stop_loss_pct / 100)
+            if stopped:
+                close_position(tok, px, "stop_loss")
+            elif exit_flag:
+                close_position(tok, px, "signal")
+        equity = cash + sum(p["qty"] * closes[tok][t] for tok, p in positions.items())
         # entries
         for tok, series in closes.items():
             if tok in positions or len(positions) >= MAX_CONCURRENT:
                 continue
-            entry_conv, _, expected_move = signals[tok][t]
+            entry_conv, _, expected_move, daily_range = signals[tok][t]
             if entry_conv is None or expected_move < min_edge_pct:
                 continue
-            usd = equity * MAX_POSITION_PCT / 100 * entry_conv
+            usd = equity * MAX_POSITION_PCT / 100 * entry_conv * vol_mult(
+                daily_range, vol_target, vol_floor)
             if usd < 10 or usd > cash:
                 continue
             px = series[t]
             qty = usd / px * (1 - leg)
             cash -= usd
-            positions[tok] = qty
+            positions[tok] = {"qty": qty, "entry_px": px}
             trades.append({"token": tok, "bar": t, "entry_usd": usd, "exit_usd": None})
 
-        equity = cash + sum(q * closes[tok][t] for tok, q in positions.items())
+        equity = cash + sum(p["qty"] * closes[tok][t] for tok, p in positions.items())
         equity_curve.append(equity)
         hwm = max(hwm, equity)
         max_dd = max(max_dd, (hwm - equity) / hwm * 100 if hwm else 0.0)
 
     # liquidate remainder at last bar for final equity
-    final = cash + sum(q * closes[tok][-1] * (1 - leg) for tok, q in positions.items())
+    final = cash + sum(p["qty"] * closes[tok][-1] * (1 - leg) for tok, p in positions.items())
     closed = [tr for tr in trades if tr["exit_usd"] is not None]
     wins = sum(1 for tr in closed if tr["exit_usd"] > tr["entry_usd"])
+    stops = sum(1 for tr in closed if tr.get("exit_reason") == "stop_loss")
     return {
         "round_trip_cost_pct": round_trip_pct,
         "min_edge_pct": min_edge_pct,
@@ -138,6 +155,7 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
         "trades_opened": len(trades),
         "trades_closed": len(closed),
         "win_rate_pct": round(wins / len(closed) * 100, 1) if closed else None,
+        "stop_loss_exits": stops,
         "open_at_end": len(positions),
     }
 
@@ -182,8 +200,28 @@ def main() -> None:
                       f"maxDD={r['max_drawdown_pct']:>5.2f}%  trades={r['trades_closed']:>3}  "
                       f"win={r['win_rate_pct']}%  B&H={r['benchmark_buyhold_pct']}%")
 
+    # Focused experiment: effect of stop-loss (#3) and vol-targeted sizing (#2)
+    # on our live config (default params, cost 1.5%, edge 2%).
+    base = precompute_signals(closes, DEFAULT_PARAMS)
+    print("\n--- improvements #2 (vol sizing) + #3 (stop-loss), default/cost1.5/edge2 ---")
+    experiments = {
+        "baseline (no stop, no vol)":   dict(stop_loss_pct=0, vol_target=0),
+        "stop 8%":                      dict(stop_loss_pct=8, vol_target=0),
+        "stop 12%":                     dict(stop_loss_pct=12, vol_target=0),
+        "vol-target 5%":                dict(stop_loss_pct=0, vol_target=5),
+        "stop 8% + vol 5%":             dict(stop_loss_pct=8, vol_target=5),
+        "stop 12% + vol 5%":            dict(stop_loss_pct=12, vol_target=5),
+    }
+    exp_out = {}
+    for label, kw in experiments.items():
+        r = simulate(closes, base, n, 1.5, 2.0, **kw)
+        exp_out[label] = r
+        print(f"{label:<28} ret={r['return_pct']:>7.2f}%  maxDD={r['max_drawdown_pct']:>5.2f}%  "
+              f"trades={r['trades_closed']:>3}  win={r['win_rate_pct']}%  stops={r['stop_loss_exits']}")
+
     DATA_DIR.mkdir(exist_ok=True)
     (DATA_DIR / "backtest_report.json").write_text(json.dumps({
+        "improvements_experiment": exp_out,
         "window_bars": n, "window_start": common_ts[0], "window_end": common_ts[-1],
         "start_equity": START_EQUITY, "max_position_pct": MAX_POSITION_PCT,
         "max_concurrent": MAX_CONCURRENT,
