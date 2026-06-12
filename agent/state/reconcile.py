@@ -87,9 +87,14 @@ def _value_holdings(holdings: dict[str, float], cmc: CMCClient) -> dict[str, flo
     if ID_MAP_PATH.exists():
         id_map = json.loads(ID_MAP_PATH.read_text())
     ids = {sym: id_map[sym]["id"] for sym in holdings if sym in id_map}
+    # Native BNB is gas, never traded (allowlist gates trading) — but it IS
+    # capital, and the judge measures the wallet's total value. Value it, or
+    # the drawdown ladder and the return % drift from the judged number.
+    for sym, cid in {"BNB": 1839}.items():
+        if sym in holdings and sym not in ids:
+            ids[sym] = cid
     unmapped = [sym for sym in holdings if sym not in ids]
     if unmapped:
-        # BNB (gas, not eligible) lands here by design; anything else is a gap.
         log.warning("no CMC id for %s — valued at $0", unmapped)
     if not ids:
         return {sym: 0.0 for sym in holdings}

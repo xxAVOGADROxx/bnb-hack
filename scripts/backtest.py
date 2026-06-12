@@ -67,6 +67,46 @@ def fetch_aligned(cmc: CMCClient, registry: TokenRegistry,
     return common, aligned
 
 
+def fetch_fear_greed_by_day(cmc: CMCClient, days: int = 60) -> dict[str, float]:
+    """Daily historical Fear & Greed: ISO date -> value. Lets the backtest
+    simulate the regime gate instead of assuming RISK_ON throughout."""
+    from datetime import datetime, timezone
+    raw = cmc._get("/v3/fear-and-greed/historical", {"limit": days})
+    out = {}
+    for row in raw:
+        day = datetime.fromtimestamp(int(row["timestamp"]), tz=timezone.utc)
+        out[day.date().isoformat()] = float(row["value"])
+    return out
+
+
+def regime_overlay(common_ts: list[str], fg_by_day: dict[str, float],
+                   mode: str, fear_floor: float = 0.45):
+    """Per-bar (entry_scale, conviction_floor) under a gate mode.
+
+    'off'  — no gate (the old backtest assumption: RISK_ON always)
+    'v1'   — symmetric placeholder: F&G <=20 or >=80 -> no entries
+    'asym' — #4: >=80 -> no entries; <=20 -> half scale + conviction floor
+    Bars whose day has no F&G datum fall back to neutral (scale 1).
+    """
+    scales = []
+    for ts in common_ts:
+        fg = fg_by_day.get(ts[:10])
+        if mode == "off" or fg is None:
+            scales.append((1.0, 0.0))
+        elif mode == "v1":
+            scales.append((0.0, 0.0) if fg <= 20 or fg >= 80 else (1.0, 0.0))
+        elif mode == "asym":
+            if fg >= 80:
+                scales.append((0.0, 0.0))
+            elif fg <= 20:
+                scales.append((0.5, fear_floor))
+            else:
+                scales.append((1.0, 0.0))
+        else:
+            raise ValueError(mode)
+    return scales
+
+
 def precompute_signals(closes: dict[str, list[float]], params: SignalParams):
     """For each token and bar: (entry_conviction|None, exit_flag).
     evaluate() is called twice (holding False/True) so entry and exit flags
@@ -93,7 +133,7 @@ def precompute_signals(closes: dict[str, list[float]], params: SignalParams):
 def simulate(closes: dict[str, list[float]], signals, n_bars: int,
              round_trip_pct: float, min_edge_pct: float = 0.0,
              stop_loss_pct: float = 0.0, vol_target: float = 0.0,
-             vol_floor: float = 0.5):
+             vol_floor: float = 0.5, regime_scales=None):
     leg = round_trip_pct / 2 / 100
     cash, positions = START_EQUITY, {}  # tok -> {qty, entry_px}
     trades, equity_curve = [], []
@@ -119,14 +159,19 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
             elif exit_flag:
                 close_position(tok, px, "signal")
         equity = cash + sum(p["qty"] * closes[tok][t] for tok, p in positions.items())
-        # entries
+        # entries (regime gate #4: per-bar entry scale + conviction floor)
+        r_scale, r_floor = regime_scales[t] if regime_scales else (1.0, 0.0)
         for tok, series in closes.items():
             if tok in positions or len(positions) >= MAX_CONCURRENT:
                 continue
+            if r_scale <= 0:
+                break
             entry_conv, _, expected_move, daily_range = signals[tok][t]
             if entry_conv is None or expected_move < min_edge_pct:
                 continue
-            usd = equity * MAX_POSITION_PCT / 100 * entry_conv * vol_mult(
+            if entry_conv < r_floor:
+                continue
+            usd = equity * MAX_POSITION_PCT / 100 * entry_conv * r_scale * vol_mult(
                 daily_range, vol_target, vol_floor)
             if usd < 10 or usd > cash:
                 continue
@@ -176,6 +221,8 @@ def buy_and_hold(closes: dict[str, list[float]], round_trip_pct: float) -> float
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bars", type=int, default=720)
+    ap.add_argument("--extra-tokens", default="",
+                    help="comma-separated candidates to A/B against the current watchlist")
     args = ap.parse_args()
 
     cfg = load_config(dry_run=True)
@@ -219,15 +266,58 @@ def main() -> None:
         print(f"{label:<28} ret={r['return_pct']:>7.2f}%  maxDD={r['max_drawdown_pct']:>5.2f}%  "
               f"trades={r['trades_closed']:>3}  win={r['win_rate_pct']}%  stops={r['stop_loss_exits']}")
 
+    # Regime gate experiment (#4): replay the SAME window under the gate modes
+    # using REAL historical Fear & Greed (daily), instead of assuming RISK_ON.
+    LIVE_KW = dict(stop_loss_pct=8, vol_target=5)  # live risk.yaml settings
+    regime_out, fg_by_day = {}, {}
+    try:
+        fg_by_day = fetch_fear_greed_by_day(cmc, days=60)
+    except CMCError as e:
+        print(f"\nF&G historical unavailable ({str(e)[:80]}) — regime experiment skipped")
+    if fg_by_day:
+        days = sorted({ts[:10] for ts in common_ts})
+        fear = sum(1 for d in days if fg_by_day.get(d, 50) <= 20)
+        greed = sum(1 for d in days if fg_by_day.get(d, 50) >= 80)
+        print(f"\n--- regime gate #4, real F&G ({len(days)} days: "
+              f"{fear} extreme-fear, {greed} extreme-greed), live cfg ---")
+        for mode in ("off", "v1", "asym"):
+            scales = regime_overlay(common_ts, fg_by_day, mode)
+            r = simulate(closes, base, n, 1.5, 2.0, regime_scales=scales, **LIVE_KW)
+            regime_out[mode] = r
+            print(f"gate={mode:<5} ret={r['return_pct']:>7.2f}%  "
+                  f"maxDD={r['max_drawdown_pct']:>5.2f}%  trades={r['trades_closed']:>3}  "
+                  f"win={r['win_rate_pct']}%")
+
+    # Watchlist expansion experiment (#5): current list vs +candidates on the
+    # SAME aligned window (shortest member bounds it), live cfg + asym gate.
+    expand_out = {}
+    extra = [s.strip().upper() for s in args.extra_tokens.split(",") if s.strip()]
+    if extra:
+        print(f"\n--- watchlist expansion: +{','.join(extra)} (live cfg, asym gate) ---")
+        all_ts, all_closes = fetch_aligned(cmc, registry, tokens + extra, args.bars)
+        m = len(all_ts)
+        print(f"aligned window: {m} bars ({all_ts[0][:13]} .. {all_ts[-1][:13]})")
+        scales = regime_overlay(all_ts, fg_by_day, "asym") if fg_by_day else None
+        for label, cl in (("current", {k: v for k, v in all_closes.items() if k in tokens}),
+                          ("expanded", all_closes)):
+            sigs = precompute_signals(cl, DEFAULT_PARAMS)
+            r = simulate(cl, sigs, m, 1.5, 2.0, regime_scales=scales, **LIVE_KW)
+            expand_out[label] = {**r, "tokens": sorted(cl)}
+            print(f"{label:<9} ({len(cl):>2} tokens)  ret={r['return_pct']:>7.2f}%  "
+                  f"maxDD={r['max_drawdown_pct']:>5.2f}%  trades={r['trades_closed']:>3}  "
+                  f"win={r['win_rate_pct']}%  stops={r['stop_loss_exits']}")
+
     DATA_DIR.mkdir(exist_ok=True)
     (DATA_DIR / "backtest_report.json").write_text(json.dumps({
+        "regime_gate_experiment": regime_out,
+        "watchlist_expansion_experiment": expand_out,
         "improvements_experiment": exp_out,
         "window_bars": n, "window_start": common_ts[0], "window_end": common_ts[-1],
         "start_equity": START_EQUITY, "max_position_pct": MAX_POSITION_PCT,
         "max_concurrent": MAX_CONCURRENT,
         "caveats": [
             "CEX-aggregated prices; real BSC fills will be worse",
-            "regime gate not simulated (RISK_ON scale=1.0 throughout)",
+            "grid results assume gate off; regime_gate_experiment uses real daily F&G",
             "history capped at ~1 month by plan — current regime only",
         ],
         "results": results,

@@ -35,3 +35,10 @@ data:
   max_signal_age_min: 10   # freshness gate: stale/failed data -> no new entries
   cycle_interval_s: 300
   regime_cache_min: 20
+
+regime:
+  # Asymmetric F&G gate (#4): extreme greed (>=80) blocks all entries; extreme
+  # fear (<=20) allows entries at HALF scale and only above this conviction
+  # floor. Calibrated 12 jun after a 12h dry-run spent entirely in extreme fear
+  # (v1 blocked the whole window; see CHANGELOG).
+  fear_conviction_floor: 0.50

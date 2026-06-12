@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from agent.alerts import Alerter
-from agent.cmc.client import CMCClient, CMCError
+from agent.cmc.client import CMCClient, CMCError, usd_quote
 from agent.config import AppConfig
 from agent.execution.executor import Executor
 from agent.logger import DecisionLog
@@ -177,6 +177,7 @@ class Agent:
             view = regime_mod.classify(
                 self.cmc.global_metrics(ttl_s=self.cfg.risk.regime_cache_min * 60),
                 self.cmc.fear_greed_latest(ttl_s=self.cfg.risk.regime_cache_min * 60),
+                fear_conviction_floor=self.cfg.risk.fear_conviction_floor,
             )
         except CMCError as e:
             # Freshness gate: no data -> no new entries this cycle.
@@ -246,12 +247,24 @@ class Agent:
             # entry price (the chain can't tell us our cost basis); if a holding
             # falls past the stop, cut it now — don't wait for the EMA signal.
             if holding:
+                # #6: check the stop against the LIVE quote (~1 min fresh), not
+                # the hourly close (up to an hour stale) — a fast dump inside
+                # the hour is caught by the next 5-min cycle.
+                stop_px = price
+                try:
+                    live = usd_quote(
+                        self.cmc.quotes_latest([cmc_id], ttl_s=60).get(cmc_id) or {}
+                    ).get("price")
+                    if live:
+                        stop_px = float(live)
+                except CMCError:
+                    pass  # degrade to the hourly close
                 entry_px = self.store.entry_price(token)
                 if entry_px is None:
-                    self.store.record_entry(token, price)  # restart: adopt, no spurious stop
+                    self.store.record_entry(token, stop_px)  # restart: adopt, no spurious stop
                 elif (self.cfg.risk.stop_loss_pct > 0
-                      and price <= entry_px * (1 - self.cfg.risk.stop_loss_pct / 100)):
-                    loss = (price / entry_px - 1) * 100
+                      and stop_px <= entry_px * (1 - self.cfg.risk.stop_loss_pct / 100)):
+                    loss = (stop_px / entry_px - 1) * 100
                     log.info("%s stop-loss: %.1f%% from entry", token, loss)
                     self.decisions.append("stop_loss", token=token, loss_pct=round(loss, 2))
                     r = self.executor.execute(
@@ -280,10 +293,12 @@ class Agent:
                 # x402 tie-break: in the grey zone (3/4 conditions) under a
                 # CONFLICTED regime, pay for one premium TA pull and enter
                 # only on a clear bullish confirmation. Don't pay when the
-                # answer couldn't be used anyway (already holding, or entries
-                # blocked by macro blackout / RISK_OFF: scale == 0).
+                # answer couldn't be used anyway (already holding, entries
+                # blocked by macro blackout / RISK_OFF: scale == 0, or the
+                # regime conviction floor would reject the entry regardless).
                 if (sig.grey_zone and view.regime == regime_mod.Regime.CONFLICTED
-                        and scale > 0 and not holding):
+                        and scale > 0 and not holding
+                        and sig.conviction >= view.entry_conviction_floor):
                     premium_entry = x402.tie_break(self.twak, self.decisions, token, cmc_id)
                 if not premium_entry:
                     continue
@@ -291,6 +306,14 @@ class Agent:
 
             is_entry = sig.action == technical.Action.BUY or premium_entry
             if is_entry and (holding or scale == 0.0):
+                continue
+            # Asymmetric regime gate (#4): under extreme fear only top-
+            # conviction setups may enter (at the halved CONFLICTED scale).
+            if is_entry and sig.conviction < view.entry_conviction_floor:
+                self.decisions.append(
+                    "entry_blocked", token=token, rule="regime_conviction_floor",
+                    conviction=round(sig.conviction, 2),
+                    floor=view.entry_conviction_floor)
                 continue
             if is_entry:
                 # Sizing = position cap x regime scale x conviction (#1) x the

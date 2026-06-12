@@ -1,10 +1,55 @@
 # Changelog — how the agent has evolved
 
 Newest first. Each entry: what changed, why, and (for strategy changes) the
-evidence. The backtest is one ~1-month window with the regime gate disabled —
-treat absolute numbers as directional, the *relative* comparisons as the signal.
+evidence. The backtest is one ~1-month window — treat absolute numbers as
+directional, the *relative* comparisons as the signal.
 
 ## Strategy model
+
+### Asymmetric regime gate, calibrated on real Fear & Greed (#4)
+- The v1 gate was a placeholder: F&G extreme (≤20 or ≥80) → no entries at all,
+  symmetric. A 12h dry-run (12 jun) spent the **entire window in extreme fear**:
+  108 buy signals cleared the edge gate and the regime rule blocked every one —
+  correctly (the strongest blocked signal, ZEC, fell 4.3% in the window). But
+  symmetric blocking means a fear-pinned live week degenerates to compliance
+  trades only.
+- v2 is **asymmetric**: extreme greed (≥80) still blocks all entries (chasing
+  euphoria); extreme fear (≤20) allows entries at **half scale AND only above a
+  conviction floor** — our entries already require trend=up + MACD bull, so in
+  deep fear they are confirmed bounces, not falling knives.
+- The backtest now simulates the gate with **real daily historical F&G**
+  (previously it assumed RISK_ON throughout). *Evidence (720h window containing
+  8 extreme-fear days, live cfg):* gate off −2.52% / DD 3.62% · v1 −0.87% /
+  DD 1.92% · **asym(floor 0.50) −0.88% / DD 1.96% with 14 vs 11 trades** — the
+  floor was calibrated by sweep (0.45/0.50/0.55); 0.50 matches the full block's
+  protection while keeping entry optionality if fear persists all week.
+
+### Watchlist expansion — evaluated and REJECTED (evidence)
+- Hypothesis: only high-volatility tokens clear the fee-aware edge gate, so add
+  more of them. Scanned all eligible candidates with ≥$20M volume (53), ranked
+  by 7-day avg daily range, friction-tested the leaders with real round-trip
+  quotes — 4 survived ≤2% (avg daily ranges 6.6–14%).
+- **Per-token marginal backtest said no**: each candidate made the portfolio
+  worse on the same window/config (base −1.79%; +WLFI −2.22%, +NEX −2.54%,
+  +ZAMA −2.64%, +XPL −4.30%). Fresh high-vol listings in post-listing
+  downtrends chop a trend-follower to death. Breadth is not free alpha.
+- Kept the **repeatable pipeline** instead: volatility scan → friction filter
+  (`scripts/liquidity_filter.py`) → marginal A/B (`scripts/backtest.py
+  --extra-tokens`). Re-run on fresh data before the live window; a candidate
+  joins only with non-negative marginal evidence.
+
+### Live-quote stop-loss check (#6)
+- The stop-loss compared against the latest *hourly close* — up to an hour
+  stale. It now checks CMC's live quote (~1 min fresh, one batched call for
+  held tokens), so an intra-hour dump is caught by the next 5-minute cycle.
+  Degrades to the hourly close if the quote call fails.
+
+### Measure like the judge: value native BNB
+- Reconcile valued only eligible BEP-20s; native BNB (gas) was logged at $0
+  "by design". But scoring is % start→end of the wallet's capital — the judge
+  counts BNB. Now valued (still never traded: the allowlist gates trading).
+  Without this, the drawdown ladder and reported return drift from the judged
+  number by the gas balance.
 
 ### Risk-managed sizing & exits — vol-targeting (#2) + stop-loss (#3)
 - **Volatility-targeted sizing (risk parity).** Position size is now scaled down

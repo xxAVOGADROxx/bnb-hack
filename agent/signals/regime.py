@@ -19,30 +19,54 @@ class Regime(str, Enum):
     RISK_OFF = "risk_off"        # fall back to stables, minimal activity
 
 
+FG_EXTREME_FEAR = 20.0
+FG_EXTREME_GREED = 80.0
+
+
 @dataclass(frozen=True)
 class RegimeView:
     regime: Regime
     fear_greed: float | None
     btc_dominance: float | None
     detail: str
+    # Extra conviction an entry must show under this regime (0 = no floor).
+    # Used by the extreme-fear branch: half-size AND only top setups.
+    entry_conviction_floor: float = 0.0
 
 
-def classify(global_metrics: dict, fear_greed: dict) -> RegimeView:
-    """Placeholder thresholds — calibrate with backtest before live week.
+def classify(global_metrics: dict, fear_greed: dict,
+             fear_conviction_floor: float = 0.50) -> RegimeView:
+    """Asymmetric Fear & Greed gate (v2).
 
-    TODO(strategy): real rules. v1 sketch:
-      - F&G extreme (<=20 or >=80) -> RISK_OFF
-      - mixed momentum vs dominance signals -> CONFLICTED
+    v1 treated both F&G extremes as RISK_OFF (no entries at all). The 12 jun
+    12h dry-run showed extreme fear can persist for days, which would reduce a
+    whole live week to compliance trades. The extremes are not symmetric:
+    extreme *greed* is froth on extended trends (chasing it is buying tops),
+    while in extreme *fear* our entry rules already demand trend=up + MACD
+    bull — i.e. a confirmed bounce, not a falling knife. So:
+
+      - F&G >= 80 -> RISK_OFF (never chase euphoria)
+      - F&G <= 20 -> CONFLICTED: entries at half scale AND only above a
+        conviction floor (keeps most of the protection the same dry-run
+        proved valuable — ZEC fell 4.3% under the blocked signals)
+      - incomplete data -> CONFLICTED (fail-cautious)
       - otherwise -> RISK_ON
     """
     fg_value = _fear_greed_value(fear_greed)
     btc_dom = (global_metrics or {}).get("btc_dominance")
 
-    if fg_value is not None and (fg_value <= 20 or fg_value >= 80):
-        return RegimeView(Regime.RISK_OFF, fg_value, btc_dom, "fear&greed extreme")
+    if fg_value is not None and fg_value >= FG_EXTREME_GREED:
+        return RegimeView(Regime.RISK_OFF, fg_value, btc_dom, "extreme greed")
+    if fg_value is not None and fg_value <= FG_EXTREME_FEAR:
+        return RegimeView(
+            Regime.CONFLICTED, fg_value, btc_dom,
+            "extreme fear: half-size, conviction floor "
+            f"{fear_conviction_floor:.2f}",
+            entry_conviction_floor=fear_conviction_floor,
+        )
     if fg_value is None or btc_dom is None:
         return RegimeView(Regime.CONFLICTED, fg_value, btc_dom, "incomplete regime data")
-    return RegimeView(Regime.RISK_ON, fg_value, btc_dom, "default placeholder rule")
+    return RegimeView(Regime.RISK_ON, fg_value, btc_dom, "f&g neutral band")
 
 
 def _fear_greed_value(fear_greed: dict) -> float | None:

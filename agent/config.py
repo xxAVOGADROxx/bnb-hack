@@ -36,6 +36,9 @@ class RiskConfig:
     max_signal_age_min: int
     cycle_interval_s: int
     regime_cache_min: int
+    # Asymmetric regime gate (#4): under F&G extreme fear, entries run at half
+    # scale and must clear this conviction floor (0 disables the floor).
+    fear_conviction_floor: float = 0.50
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,8 @@ def load_config(dry_run: bool = True) -> AppConfig:
         max_signal_age_min=int(r["data"]["max_signal_age_min"]),
         cycle_interval_s=int(r["data"]["cycle_interval_s"]),
         regime_cache_min=int(r["data"]["regime_cache_min"]),
+        fear_conviction_floor=float(
+            (r.get("regime") or {}).get("fear_conviction_floor", 0.50)),
     )
     # The real watchlist is private: config/watchlist.local.yaml (gitignored)
     # overrides the empty placeholder committed to the public repo.
