@@ -6,6 +6,20 @@ directional, the *relative* comparisons as the signal.
 
 ## Strategy model
 
+### Anti-whipsaw: re-entry cooldown + per-token edge floor (#9)
+- **24h re-entry cooldown.** After closing a token, no re-entry for 24h. The
+  same-day BUY→exit→BUY churn pays double friction for ~zero edge.
+  *Evidence (720h, live cfg + asym gate, two independent windows):* return
+  +0.5 to +0.6pp, win rate 29%→36-42%, fewer trades. Improved in both.
+- **Per-token edge floor.** An entry's expected edge must clear the token's
+  OWN measured round-trip friction + 0.5% (from `data/liquidity_report.json`),
+  not just the global 2% minimum — ETH (1.3%) trades cheaper than TRX (2.0%).
+  *Evidence:* +0.3pp return, −13% maxDD on top of the cooldown, both windows.
+- **Trailing stop evaluated and REJECTED.** Locking winners with a peak-drop
+  exit flipped sign between adjacent windows (+0.4% → −0.4%) — not robust;
+  the EMA-loss exit already owns that role. Documented like the watchlist
+  rejection: the backtest decides, both ways.
+
 ### Liquidity sentinel — CMC DEX API pool monitoring (#7)
 - New guardrail for the tail risk every price-based exit lags: **liquidity
   draining out of the pool** (rug, LP migration, panic withdrawal). On entry

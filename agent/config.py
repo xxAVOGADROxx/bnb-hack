@@ -43,6 +43,10 @@ class RiskConfig:
     # this far below the entry-time baseline (0 disables).
     liquidity_exit_drop_pct: float = 40.0
     liquidity_min_ref_usd: float = 100_000.0
+    # Anti-whipsaw (#9): hours before a closed token may be re-entered, and
+    # the margin over each token's measured friction an entry must clear.
+    reentry_cooldown_h: float = 24.0
+    edge_floor_margin_pct: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ def load_config(dry_run: bool = True) -> AppConfig:
             (r.get("exits") or {}).get("liquidity_exit_drop_pct", 0.0)),
         liquidity_min_ref_usd=float(
             (r.get("exits") or {}).get("liquidity_min_ref_usd", 100_000.0)),
+        reentry_cooldown_h=float(r["limits"].get("reentry_cooldown_h", 0.0)),
+        edge_floor_margin_pct=float(r["limits"].get("edge_floor_margin_pct", 0.0)),
     )
     # The real watchlist is private: config/watchlist.local.yaml (gitignored)
     # overrides the empty placeholder committed to the public repo.

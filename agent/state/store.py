@@ -98,6 +98,14 @@ class StateStore:
         if (self._state.get("entry_prices") or {}).pop(token, None) is not None:
             self._save()
 
+    # -- re-entry cooldown (#9): last exit time per token ----------------------
+    def record_token_exit(self, token: str, ts: str) -> None:
+        self._state.setdefault("last_exits", {})[token] = ts
+        self._save()
+
+    def last_token_exit(self, token: str) -> str | None:
+        return (self._state.get("last_exits") or {}).get(token)
+
     # -- liquidity sentinel baselines (#7) ------------------------------------
     def pool_baseline(self, token: str) -> dict | None:
         return (self._state.get("pool_baselines") or {}).get(token)

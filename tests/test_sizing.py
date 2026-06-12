@@ -39,3 +39,13 @@ def test_stop_loss_threshold_math():
     trigger = entry * (1 - stop_pct / 100)
     assert trigger == approx(92.0)
     assert 91.9 <= trigger  # a price of 91 would stop; 93 would not
+
+
+def test_token_exit_cooldown_clock(tmp_path):
+    s = StateStore(path=tmp_path / "state.json")
+    assert s.last_token_exit("CAKE") is None
+    s.record_token_exit("CAKE", "2026-06-12T10:00:00+00:00")
+    assert s.last_token_exit("CAKE") == "2026-06-12T10:00:00+00:00"
+    # survives a reload (persisted)
+    assert (StateStore(path=tmp_path / "state.json")
+            .last_token_exit("CAKE")) == "2026-06-12T10:00:00+00:00"

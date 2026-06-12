@@ -10,13 +10,14 @@ No LLM decides ticks — the strategy is code.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
 
 from agent.alerts import Alerter
 from agent.cmc.client import CMCClient, CMCError, usd_quote
-from agent.config import AppConfig
+from agent.config import DATA_DIR, AppConfig
 from agent.execution.executor import Executor
 from agent.logger import DecisionLog
 from agent.monitor.snapshot import maybe_snapshot
@@ -63,6 +64,17 @@ class Agent:
             min_ref_usd=cfg.risk.liquidity_min_ref_usd,
             exit_drop_pct=cfg.risk.liquidity_exit_drop_pct,
         ) if cfg.risk.liquidity_exit_drop_pct > 0 else None
+        # Per-token edge floor (#9): an entry must clear the token's own
+        # MEASURED round-trip friction + margin, not just the global min.
+        self.edge_floors: dict[str, float] = {}
+        if cfg.risk.edge_floor_margin_pct > 0:
+            try:
+                liq = json.loads((DATA_DIR / "liquidity_report.json").read_text())
+                self.edge_floors = {
+                    r["symbol"]: r["round_trip_cost_pct"] + cfg.risk.edge_floor_margin_pct
+                    for r in liq.get("results", [])}
+            except (OSError, ValueError, KeyError):
+                log.warning("no liquidity report — per-token edge floor disabled")
         self.executor = Executor(
             self.twak, self.risk, self.store, self.decisions,
             cfg.risk.max_slippage_pct, registry=self.registry, alerter=self.alerter,
@@ -308,9 +320,7 @@ class Agent:
                         signal_age_min=0.0,
                     )
                     if r is not None:
-                        self.store.clear_entry(token)
-                        if self.sentinel:
-                            self.sentinel.clear(token)
+                        self._position_closed(token)
                     continue
                 # Liquidity sentinel (#7): the pool draining is the one tail
                 # risk price-based exits lag — check it independently.
@@ -332,13 +342,10 @@ class Agent:
                             signal_age_min=0.0,
                         )
                         if r is not None:
-                            self.store.clear_entry(token)
-                            self.sentinel.clear(token)
+                            self._position_closed(token)
                         continue
             elif self.store.entry_price(token) is not None:
-                self.store.clear_entry(token)  # no longer holding -> forget cost basis
-                if self.sentinel:
-                    self.sentinel.clear(token)
+                self._position_closed(token)  # position left without us seeing the exit
 
             sig = technical.evaluate(token, closes, holding=holding)
             self.decisions.append(
@@ -373,6 +380,20 @@ class Agent:
                     "entry_blocked", token=token, rule="regime_conviction_floor",
                     conviction=round(sig.conviction, 2),
                     floor=view.entry_conviction_floor)
+                continue
+            # Anti-whipsaw (#9): a freshly closed token can't be re-entered
+            # the same day, and the edge must clear the token's OWN measured
+            # friction (+margin), not just the global minimum.
+            if is_entry and self._in_cooldown(token):
+                self.decisions.append(
+                    "entry_blocked", token=token, rule="reentry_cooldown",
+                    last_exit=self.store.last_token_exit(token))
+                continue
+            tok_floor = self.edge_floors.get(token, 0.0)
+            if is_entry and sig.expected_move_pct < tok_floor:
+                self.decisions.append(
+                    "entry_blocked", token=token, rule="edge_floor",
+                    edge=round(sig.expected_move_pct, 2), floor=round(tok_floor, 2))
                 continue
             if is_entry:
                 # Sizing = position cap x regime scale x conviction (#1) x the
@@ -413,9 +434,25 @@ class Agent:
                     if self.sentinel and addr:
                         self.sentinel.on_entry(token, addr)
                 else:
-                    self.store.clear_entry(token)
-                    if self.sentinel:
-                        self.sentinel.clear(token)
+                    self._position_closed(token)
+
+    def _position_closed(self, token: str) -> None:
+        """Bookkeeping when a position closes: forget cost basis + pool
+        baseline, start the re-entry cooldown clock (#9)."""
+        self.store.clear_entry(token)
+        self.store.record_token_exit(token, datetime.now(timezone.utc).isoformat())
+        if self.sentinel:
+            self.sentinel.clear(token)
+
+    def _in_cooldown(self, token: str) -> bool:
+        if self.cfg.risk.reentry_cooldown_h <= 0:
+            return False
+        last = self.store.last_token_exit(token)
+        if not last:
+            return False
+        age_h = (datetime.now(timezone.utc)
+                 - datetime.fromisoformat(last)).total_seconds() / 3600
+        return age_h < self.cfg.risk.reentry_cooldown_h
 
     def _flatten_to_stables(self, portfolio, state: RiskState) -> None:
         """Hard stop: close every non-stable position into the primary stable."""

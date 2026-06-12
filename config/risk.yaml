@@ -32,6 +32,15 @@ limits:
   max_trades_per_day: 4    # anti-overtrading: friction eats returns
   max_slippage_pct: 1.0    # quote above this -> do not trade
   min_expected_edge_pct: 2.0  # entries must clear the cost floor with margin
+  # Re-entry cooldown (#9): after closing a token, no re-entry for this many
+  # hours. Kills the same-day whipsaw that pays double friction. Backtest:
+  # +0.5pp return, win 29%->36%, in both windows tested. 0 disables.
+  reentry_cooldown_h: 24
+  # Per-token edge floor (#9): an entry's expected edge must also clear the
+  # token's own MEASURED round-trip friction (data/liquidity_report.json)
+  # plus this margin — cheap tokens trade at 2%, expensive ones need more.
+  # Backtest: +0.3pp / -13% maxDD on top of the cooldown. 0 disables.
+  edge_floor_margin_pct: 0.5
 
 compliance:
   daily_trade_deadline_utc: "20:00"  # force a minimal eligible trade if none yet that UTC day

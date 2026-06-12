@@ -133,17 +133,28 @@ def precompute_signals(closes: dict[str, list[float]], params: SignalParams):
 def simulate(closes: dict[str, list[float]], signals, n_bars: int,
              round_trip_pct: float, min_edge_pct: float = 0.0,
              stop_loss_pct: float = 0.0, vol_target: float = 0.0,
-             vol_floor: float = 0.5, regime_scales=None):
+             vol_floor: float = 0.5, regime_scales=None,
+             trail_pct: float = 0.0, trail_arm_pct: float = 0.0,
+             cooldown_bars: int = 0, edge_floor: dict | None = None):
+    """Extra mechanisms (all default-off = current live behaviour):
+    - trail_pct/trail_arm_pct: once a position is up trail_arm_pct from entry,
+      exit if price falls trail_pct from its peak (lock winners).
+    - cooldown_bars: after closing a token, no re-entry for N bars (whipsaw).
+    - edge_floor: per-token minimum expected edge (e.g. measured friction +
+      margin) layered on top of the global min_edge_pct.
+    """
     leg = round_trip_pct / 2 / 100
-    cash, positions = START_EQUITY, {}  # tok -> {qty, entry_px}
+    cash, positions = START_EQUITY, {}  # tok -> {qty, entry_px, peak}
     trades, equity_curve = [], []
     hwm, max_dd = 0.0, 0.0
+    last_exit: dict[str, int] = {}
 
-    def close_position(tok, px, label):
+    def close_position(tok, px, label, t):
         pos = positions.pop(tok)
         proceeds = pos["qty"] * px * (1 - leg)
         nonlocal cash
         cash += proceeds
+        last_exit[tok] = t
         tr = trades[-_open_idx(trades, tok)]
         tr["exit_usd"] = proceeds
         tr["exit_reason"] = label
@@ -153,11 +164,16 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
         for tok in list(positions):
             _, exit_flag, _, _ = signals[tok][t]
             px = closes[tok][t]
-            stopped = stop_loss_pct > 0 and px <= positions[tok]["entry_px"] * (1 - stop_loss_pct / 100)
-            if stopped:
-                close_position(tok, px, "stop_loss")
+            pos = positions[tok]
+            pos["peak"] = max(pos["peak"], px)
+            armed = (trail_pct > 0
+                     and pos["peak"] >= pos["entry_px"] * (1 + trail_arm_pct / 100))
+            if stop_loss_pct > 0 and px <= pos["entry_px"] * (1 - stop_loss_pct / 100):
+                close_position(tok, px, "stop_loss", t)
+            elif armed and px <= pos["peak"] * (1 - trail_pct / 100):
+                close_position(tok, px, "trail", t)
             elif exit_flag:
-                close_position(tok, px, "signal")
+                close_position(tok, px, "signal", t)
         equity = cash + sum(p["qty"] * closes[tok][t] for tok, p in positions.items())
         # entries (regime gate #4: per-bar entry scale + conviction floor)
         r_scale, r_floor = regime_scales[t] if regime_scales else (1.0, 0.0)
@@ -166,8 +182,11 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
                 continue
             if r_scale <= 0:
                 break
+            if cooldown_bars and t - last_exit.get(tok, -10**9) < cooldown_bars:
+                continue
             entry_conv, _, expected_move, daily_range = signals[tok][t]
-            if entry_conv is None or expected_move < min_edge_pct:
+            floor = max(min_edge_pct, (edge_floor or {}).get(tok, 0.0))
+            if entry_conv is None or expected_move < floor:
                 continue
             if entry_conv < r_floor:
                 continue
@@ -178,7 +197,7 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
             px = series[t]
             qty = usd / px * (1 - leg)
             cash -= usd
-            positions[tok] = {"qty": qty, "entry_px": px}
+            positions[tok] = {"qty": qty, "entry_px": px, "peak": px}
             trades.append({"token": tok, "bar": t, "entry_usd": usd, "exit_usd": None})
 
         equity = cash + sum(p["qty"] * closes[tok][t] for tok, p in positions.items())
@@ -191,6 +210,7 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
     closed = [tr for tr in trades if tr["exit_usd"] is not None]
     wins = sum(1 for tr in closed if tr["exit_usd"] > tr["entry_usd"])
     stops = sum(1 for tr in closed if tr.get("exit_reason") == "stop_loss")
+    trails = sum(1 for tr in closed if tr.get("exit_reason") == "trail")
     return {
         "round_trip_cost_pct": round_trip_pct,
         "min_edge_pct": min_edge_pct,
@@ -201,6 +221,7 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
         "trades_closed": len(closed),
         "win_rate_pct": round(wins / len(closed) * 100, 1) if closed else None,
         "stop_loss_exits": stops,
+        "trail_exits": trails,
         "open_at_end": len(positions),
     }
 
@@ -268,7 +289,14 @@ def main() -> None:
 
     # Regime gate experiment (#4): replay the SAME window under the gate modes
     # using REAL historical Fear & Greed (daily), instead of assuming RISK_ON.
-    LIVE_KW = dict(stop_loss_pct=8, vol_target=5)  # live risk.yaml settings
+    LIVE_KW: dict = dict(stop_loss_pct=8, vol_target=5,  # live risk.yaml
+                         cooldown_bars=24)
+    try:  # per-token edge floor (#9), mirroring the live loop
+        liq = json.loads((DATA_DIR / "liquidity_report.json").read_text())
+        LIVE_KW["edge_floor"] = {r["symbol"]: r["round_trip_cost_pct"] + 0.5
+                                 for r in liq.get("results", [])}
+    except (OSError, ValueError, KeyError):
+        pass
     regime_out, fg_by_day = {}, {}
     try:
         fg_by_day = fetch_fear_greed_by_day(cmc, days=60)
