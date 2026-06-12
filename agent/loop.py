@@ -121,6 +121,24 @@ class Agent:
         log.info("agent stopped cleanly")
 
     # -- canary (pre-week live validation) -----------------------------------
+    def flatten(self) -> None:
+        """One-shot: close every non-stable position into USDT and exit.
+        For the end of the competition window (lock the measured result in
+        stables) or any emergency de-risk. Honors dry-run."""
+        self.registry.ensure_id_map(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        self.registry.ensure_addresses(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+        non_stable = {s: v for s, v in portfolio.usd_values.items()
+                      if s not in self.cfg.tokens.stables and s != "BNB" and v > 1.0}
+        if not non_stable:
+            log.info("flatten: nothing to close (already in stables)")
+            self.alerter.notify("🏁 flatten: already flat — nothing to close")
+            return
+        log.info("flatten: closing %s", ", ".join(f"{s} ${v:.2f}" for s, v in non_stable.items()))
+        self._flatten_to_stables(portfolio, RiskState.NORMAL)
+        final = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+        self.alerter.notify(f"🏁 flattened to stables — final ${final.total_usd:.2f}")
+
     def canary_roundtrip(self, token: str = "CAKE", usd: float = 10.0) -> None:
         """One small REAL round-trip through the full executor path, to prove
         autonomous signing end-to-end before the live week. Buys then sells the
@@ -403,7 +421,9 @@ class Agent:
         """Hard stop: close every non-stable position into the primary stable."""
         self.alerter.notify("HARD STOP: flattening to stables")
         for sym, usd in portfolio.usd_values.items():
-            if sym in self.cfg.tokens.stables or usd <= 1.0:
+            # BNB is the gas reserve (valued, but not eligible/tradable):
+            # never propose selling it — the allowlist would reject it anyway.
+            if sym in self.cfg.tokens.stables or sym == "BNB" or usd <= 1.0:
                 continue
             self.executor.execute(
                 TradeProposal(sym, self.cfg.tokens.stables[0], usd, 0.0, False,

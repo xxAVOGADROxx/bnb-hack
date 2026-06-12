@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--canary", action="store_true",
                         help="do one small real round-trip to validate the live "
                              "execution path, then exit (use with --live)")
+    parser.add_argument("--flatten", action="store_true",
+                        help="one-shot: close every non-stable position into "
+                             "USDT and exit (end of competition / emergency)")
     parser.add_argument("--paper-equity", type=float, default=0.0,
                         help="DRY-RUN ONLY: size entries as if the portfolio "
                              "were this big, so test windows exercise the full "
@@ -40,6 +43,9 @@ def main() -> None:
         signal.signal(sig, agent.request_stop)
     if args.canary:
         agent.canary_roundtrip()
+        return
+    if args.flatten:
+        agent.flatten()
         return
     agent.run(once=args.once, max_hours=args.max_hours)
 
