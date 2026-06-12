@@ -42,6 +42,21 @@ class SignalParams:
     rsi_overbought: float = 70.0
     rsi_blowoff: float = 80.0
     min_bars: int = 60
+    # Dynamic conviction (sizing weight, 0..1). Composite of three normalized
+    # sub-scores; weights sum to 1. Tunables — backtest, don't trust as truths.
+    min_conviction: float = 0.20    # floor for a valid 4/4 entry (weak but real)
+    trend_full_ratio: float = 0.50  # EMA-spread/daily-range at which trend = full
+    macd_full_pct: float = 0.30     # MACD histogram as % of price at full momentum
+    w_trend: float = 0.40
+    w_momentum: float = 0.35
+    w_rsi: float = 0.25
+    grey_conviction_mult: float = 0.60  # 3/4 grey-zone entries size smaller
+    # Edge gate is DECOUPLED from sizing: it uses a conservative, fixed fraction
+    # of the daily range as the edge estimate (so a strong-conviction signal
+    # can't loosen the "is there enough edge to beat friction?" filter). This
+    # keeps the selectivity that the backtest shows matters; conviction only
+    # changes position size, never whether the trade clears the min-edge gate.
+    edge_conviction_ref: float = 0.30
 
 
 DEFAULT_PARAMS = SignalParams()
@@ -72,6 +87,30 @@ def rsi(closes: pd.Series, period: int = 14) -> pd.Series:
 def macd(closes: pd.Series, fast: int, slow: int, signal: int) -> tuple[pd.Series, pd.Series]:
     line = ema(closes, fast) - ema(closes, slow)
     return line, line.ewm(span=signal, adjust=False).mean()
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def conviction_score(
+    ema_fast: float, ema_slow: float, macd_hist: float, rsi_now: float,
+    price: float, move: float, p: SignalParams,
+) -> tuple[float, dict]:
+    """Composite entry conviction in [min_conviction, 1.0] — how strong the
+    setup is, used for position sizing (and, via expected_move, the edge gate).
+    Three normalized drivers so weak and strong setups size differently:
+      trend    — EMA fast/slow spread relative to the token's own daily range
+      momentum — MACD histogram (line-signal) as a % of price
+      rsi_room — headroom below overbought (more room = more to run)
+    """
+    spread_ratio = ((ema_fast - ema_slow) / ema_slow * 100 / move) if move > 0 else 0.0
+    trend = _clamp01(spread_ratio / p.trend_full_ratio)
+    momentum = _clamp01((macd_hist / price * 100) / p.macd_full_pct) if price > 0 else 0.0
+    rsi_room = _clamp01((p.rsi_overbought - rsi_now) / (p.rsi_overbought - 50.0))
+    raw = p.w_trend * trend + p.w_momentum * momentum + p.w_rsi * rsi_room
+    conviction = p.min_conviction + raw * (1.0 - p.min_conviction)
+    return conviction, {"t": round(trend, 2), "m": round(momentum, 2), "r": round(rsi_room, 2)}
 
 
 def avg_daily_range_pct(closes: pd.Series, bars_per_day: int = 24, days: int = 7) -> float:
@@ -121,14 +160,22 @@ def evaluate(
                     or (not macd_bull and not uptrend)):
         return Signal(token, Action.SELL, 1.0, False, move, f"exit: {detail}")
 
+    macd_hist = macd_line.iloc[-1] - macd_sig.iloc[-1]
+    conviction, drivers = conviction_score(
+        ema_fast, ema_slow, macd_hist, rsi_now, price, move, params)
+    drv = f"conv(t{drivers['t']}/m{drivers['m']}/r{drivers['r']})"
+
+    # Edge estimate for the risk engine's min-edge gate: a conservative fixed
+    # fraction of the daily range — independent of conviction, so sizing and
+    # gating are separate knobs (see edge_conviction_ref).
+    edge = move * params.edge_conviction_ref
+
     if met == 4:
-        # Conviction scales with how far the fast EMA leads the slow one,
-        # normalized by the token's own daily range.
-        spread_pct = (ema_fast - ema_slow) / ema_slow * 100
-        conviction = max(0.3, min(1.0, spread_pct / move if move > 0 else 0.3))
         return Signal(token, Action.BUY, conviction, False,
-                      move * conviction, f"entry: {detail}")
+                      edge, f"entry: {detail} {drv}")
     if met == 3:
-        return Signal(token, Action.HOLD, 0.5, True, move * 0.5,
-                      f"grey zone (3/4): {detail}")
+        # 3/4 grey-zone candidate for the x402 tie-break; sized smaller.
+        grey_conv = conviction * params.grey_conviction_mult
+        return Signal(token, Action.HOLD, grey_conv, True,
+                      edge, f"grey zone (3/4): {detail} {drv}")
     return Signal(token, Action.HOLD, 0.0, False, move, detail)
