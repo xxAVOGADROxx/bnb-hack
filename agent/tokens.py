@@ -46,12 +46,26 @@ class TokenRegistry:
         missing = [s for s in symbols if s not in self.id_map]
         if not missing:
             return
-        try:
-            data = cmc.id_map(missing)
-        except CMCError as e:
-            log.warning("could not build id map for %s: %s", missing, e)
+        # CMC's /map endpoint accepts only comma-separated ASCII-alphanumeric
+        # symbols and rejects the WHOLE batch on one non-ASCII name (some
+        # eligible tokens are CN-named memecoins, e.g. 币安人生). Drop those
+        # (they can't be symbol-resolved anyway) and chunk the rest so a single
+        # unresolvable symbol can't poison everyone else's lookup.
+        usable = [s for s in missing if s.isascii() and s.isalnum()]
+        if len(usable) < len(missing):
+            log.info("id map: skipping %d non-alphanumeric symbol(s)",
+                     len(missing) - len(usable))
+        rows: list = []
+        for i in range(0, len(usable), 100):
+            chunk = usable[i:i + 100]
+            try:
+                data = cmc.id_map(chunk)
+            except CMCError as e:
+                log.warning("could not build id map for %s: %s", chunk, e)
+                continue
+            rows += data if isinstance(data, list) else (data.get("data") or [])
+        if not rows:
             return
-        rows = data if isinstance(data, list) else (data.get("data") or [])
         # CMC returns one row per symbol; keep the highest-rank (lowest rank #).
         for row in rows:
             sym = row.get("symbol")

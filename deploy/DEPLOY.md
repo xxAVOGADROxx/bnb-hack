@@ -26,13 +26,20 @@ docker compose run --rm agent --live --canary
 1. `twak` authenticated and the agent wallet created (`~/.twak` exists —
    already done on this server).
 2. Docker + the compose plugin (option A) or python3.10+/node22 (option B).
-3. Repo cloned; then copy the two private files that are NOT in git:
+3. Repo cloned; then provide the private files that are NOT in git (they
+   reveal the strategy, so they live only on the server):
    - `.env` — from `.env.example`: `CMC_PRO_API_KEY`, `TW_ACCESS_ID`,
      `TW_HMAC_SECRET`, and `TWAK_WALLET_PASSWORD` (containers have no OS
      keychain, so the password must come from the environment).
    - `config/watchlist.local.yaml` — the private watchlist.
      ⚠️ Copy it BEFORE `docker compose up`: if the file is missing, docker
      creates a directory in its place and the mount breaks.
+   - `data/liquidity_report.json` — the measured per-token friction that
+     powers the edge floor (#9). Generate it ON the server (it's gitignored):
+     `python scripts/liquidity_filter.py` (or it ships in `data/` if you
+     `scp` the whole dir). **Without it the per-token edge floor is disabled**
+     (the agent logs a warning and, in LIVE mode, Telegram-alerts) — the
+     re-entry cooldown still applies, but regenerate it before the live week.
 
 ## Option A — Docker Compose (recommended)
 
