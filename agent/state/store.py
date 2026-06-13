@@ -77,12 +77,20 @@ class StateStore:
         self._save()
 
     # -- trade counters -------------------------------------------------------
-    def trades_today(self, now: datetime) -> int:
-        return int(self._state["trades_by_day"].get(_utc_date(now), 0))
+    # Live and dry-run keep SEPARATE daily ledgers: a dry-run cycle must not
+    # bump the counter the live compliance gate reads, or leftover test state
+    # would suppress the required real trade (a DQ hazard). Each mode also still
+    # mirrors its own cadence (compliance fires once, daily cap holds).
+    def _ledger_key(self, dry_run: bool) -> str:
+        return "dry_trades_by_day" if dry_run else "trades_by_day"
 
-    def record_trade(self, now: datetime) -> None:
-        day = _utc_date(now)
-        self._state["trades_by_day"][day] = self._state["trades_by_day"].get(day, 0) + 1
+    def trades_today(self, now: datetime, dry_run: bool = False) -> int:
+        ledger = self._state.setdefault(self._ledger_key(dry_run), {})
+        return int(ledger.get(_utc_date(now), 0))
+
+    def record_trade(self, now: datetime, dry_run: bool = False) -> None:
+        ledger = self._state.setdefault(self._ledger_key(dry_run), {})
+        ledger[_utc_date(now)] = ledger.get(_utc_date(now), 0) + 1
         self._save()
 
     # -- entry prices (for the stop-loss; chain can't tell us our cost basis) --

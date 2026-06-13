@@ -340,7 +340,7 @@ class Agent:
         ) or "empty"
         self.alerter.notify(
             f"💰 ${portfolio.total_usd:.2f} ({ret}) | dd {metrics.drawdown_pct:.1f}% | "
-            f"trades today {self.store.trades_today(now)}\n{held}"
+            f"trades today {self.store.trades_today(now, self.cfg.dry_run)}\n{held}"
         )
 
     # -- helpers -------------------------------------------------------------------
@@ -553,7 +553,7 @@ class Agent:
     def _ensure_daily_trade(self, now: datetime, portfolio, state: RiskState) -> None:
         """>=1 trade per UTC day is a qualification constraint, not alpha:
         if nothing traded by the deadline, do a minimal stable<->stable swap."""
-        if self.store.trades_today(now) > 0:
+        if self.store.trades_today(now, self.cfg.dry_run) > 0:
             return
         hh, mm = map(int, self.cfg.risk.daily_trade_deadline_utc.split(":"))
         if (now.hour, now.minute) < (hh, mm):

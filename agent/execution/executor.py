@@ -65,7 +65,7 @@ class Executor:
             portfolio_usd=portfolio_usd,
             state=state,
             open_positions=open_positions,
-            trades_today=self.store.trades_today(now),
+            trades_today=self.store.trades_today(now, getattr(self.twak, "dry_run", False)),
             signal_age_min=signal_age_min,
         )
         base = {
@@ -110,9 +110,10 @@ class Executor:
             return None
 
         tx_hash = result.get("hash") or result.get("txHash")
-        # Record simulated trades too: dry-run must mirror live cadence
-        # (compliance + daily caps), or it retries the same trade every cycle.
-        self.store.record_trade(now)
+        # Record into the mode's own ledger: dry-run mirrors its own cadence
+        # (no compliance spam) WITHOUT inflating the live counter compliance
+        # reads — a leftover dry-run trade must never suppress the real one.
+        self.store.record_trade(now, bool(result.get("dry_run")))
         if not result.get("dry_run"):
             # TODO(server): post-swap verification — confirm the balance delta
             # matches the quote within tolerance; alert on mismatch.

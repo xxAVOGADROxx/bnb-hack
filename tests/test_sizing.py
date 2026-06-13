@@ -49,3 +49,16 @@ def test_token_exit_cooldown_clock(tmp_path):
     # survives a reload (persisted)
     assert (StateStore(path=tmp_path / "state.json")
             .last_token_exit("CAKE")) == "2026-06-12T10:00:00+00:00"
+
+
+def test_dry_run_and_live_trade_ledgers_are_separate(tmp_path):
+    from datetime import datetime, timezone
+    s = StateStore(path=tmp_path / "state.json")
+    now = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
+    # a dry-run trade must NOT count toward the live compliance gate
+    s.record_trade(now, dry_run=True)
+    assert s.trades_today(now, dry_run=True) == 1
+    assert s.trades_today(now, dry_run=False) == 0   # live ledger untouched
+    s.record_trade(now, dry_run=False)
+    assert s.trades_today(now, dry_run=False) == 1
+    assert s.trades_today(now, dry_run=True) == 1     # independent
