@@ -90,7 +90,7 @@ python -m agent --once     # one DRY-RUN cycle (real signals, no tx signed)
 python -m agent            # continuous dry-run
 python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
-pytest -q                  # 51 tests
+pytest -q                  # 52 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)
