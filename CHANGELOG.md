@@ -141,6 +141,20 @@ directional, the *relative* comparisons as the signal.
 
 ## Infrastructure
 
+### Scheduled window + periodic ops reports (#10)
+- `--start-at` / `--stop-at` (exact UTC, e.g. `2026-06-22T00:00Z`): the agent
+  waits for the window, trades it, and stops cleanly at the end — no human
+  timezone arithmetic. Crash-restart safe: re-reads the bounds (waits again /
+  resumes / exits quietly if the window is over).
+- `--report-every-min N`: every N minutes the agent writes a uniquely-named
+  ops report to `data/reports/` (decision digest: signals, blocks by rule,
+  trades with approximate round-trip PnL — plus portfolio and the live
+  leaderboard standing) and pushes a summary to Telegram. A final report is
+  emitted on shutdown. `scripts/daily_digest.py` produces the same report on
+  demand. This is the human/LLM review loop: audit each period, calibrate
+  between days — the LLM stays out of the tick loop.
+
+
 ### The agent charges x402, not just pays it (#8)
 - New x402 V2 **server** (`agent/x402/server.py`): sells the read-only
   competition leaderboard at 0.01 USD1/call. Speaks the same dialect as CMC's

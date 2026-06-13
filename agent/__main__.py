@@ -8,10 +8,20 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+from datetime import datetime, timezone
 
 from agent.config import load_config
 from agent.logger import setup_logging
 from agent.loop import Agent
+
+
+def parse_utc(s: str) -> datetime:
+    """ISO timestamp -> aware UTC datetime. Naive input is taken AS UTC —
+    never the machine's local timezone (no UTC-vs-local confusion)."""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def main() -> None:
@@ -21,6 +31,16 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run a single cycle and exit")
     parser.add_argument("--max-hours", type=float, default=None,
                         help="stop cleanly after N hours (bounded test window)")
+    parser.add_argument("--start-at", type=parse_utc, default=None, metavar="UTC",
+                        help="wait and start the loop at this exact UTC time "
+                             "(e.g. 2026-06-22T00:00Z)")
+    parser.add_argument("--stop-at", type=parse_utc, default=None, metavar="UTC",
+                        help="stop cleanly at this exact UTC time "
+                             "(e.g. 2026-06-28T23:59Z)")
+    parser.add_argument("--report-every-min", type=float, default=0.0,
+                        help="every N minutes, write a uniquely-named ops "
+                             "report (digest + leaderboard) to data/reports/ "
+                             "and summarize it to Telegram (0 = off)")
     parser.add_argument("--canary", action="store_true",
                         help="do one small real round-trip to validate the live "
                              "execution path, then exit (use with --live)")
@@ -47,7 +67,9 @@ def main() -> None:
     if args.flatten:
         agent.flatten()
         return
-    agent.run(once=args.once, max_hours=args.max_hours)
+    agent.run(once=args.once, max_hours=args.max_hours,
+              start_at=args.start_at, stop_at=args.stop_at,
+              report_every_min=args.report_every_min)
 
 
 if __name__ == "__main__":

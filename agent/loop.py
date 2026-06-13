@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -20,6 +21,7 @@ from agent.cmc.client import CMCClient, CMCError, usd_quote
 from agent.config import DATA_DIR, AppConfig
 from agent.execution.executor import Executor
 from agent.logger import DecisionLog
+from agent.monitor import digest as digest_mod
 from agent.monitor.snapshot import maybe_snapshot
 from agent.risk.engine import RiskEngine, RiskState, TradeProposal
 from agent.risk.liquidity import LiquiditySentinel
@@ -81,6 +83,8 @@ class Agent:
         )
         self._stop = False           # set by SIGTERM/SIGINT for a clean shutdown
         self._last_heartbeat_hour = -1
+        self._lb = None              # lazy read-only leaderboard monitor
+        self._last_report: datetime | None = None
 
     # -- lifecycle -----------------------------------------------------------
     def request_stop(self, *_a) -> None:
@@ -90,7 +94,9 @@ class Agent:
         log.info("stop requested — will exit after the current cycle")
         self._stop = True
 
-    def run(self, once: bool = False, max_hours: float | None = None) -> None:
+    def run(self, once: bool = False, max_hours: float | None = None,
+            start_at: datetime | None = None, stop_at: datetime | None = None,
+            report_every_min: float = 0.0) -> None:
         mode = "LIVE" if not self.cfg.dry_run else "dry-run"
         log.info("agent starting (%s, chain=%s)", mode, self.cfg.chain)
         # Bootstrap the symbol->id->address caches if a fresh clone has none
@@ -99,15 +105,41 @@ class Agent:
         self.registry.ensure_id_map(self.cmc, universe)
         # Contract addresses are mandatory for execution — resolve up front.
         self.registry.ensure_addresses(self.cmc, universe)
-        deadline = None
+
+        # Scheduled window (exact UTC): sleep until start_at, stop at stop_at.
+        # Everything in UTC — no local-timezone arithmetic, ever.
+        now = datetime.now(timezone.utc)
+        if stop_at and now >= stop_at:
+            # Restarted after the window already ended (docker restart policy):
+            # exit quietly — no trading, no Telegram spam.
+            log.info("window already over (%s) — exiting", stop_at.isoformat())
+            time.sleep(60)  # damp the docker restart loop
+            return
+        if start_at and now < start_at:
+            self.alerter.notify(
+                f"⏳ scheduled: trading starts {start_at:%Y-%m-%d %H:%M} UTC "
+                f"(in {(start_at - now).total_seconds() / 3600:.1f}h) — waiting")
+            while not self._stop and datetime.now(timezone.utc) < start_at:
+                time.sleep(2)
+            if self._stop:
+                self.alerter.notify("🛑 stopped while waiting for window start")
+                return
+            self.alerter.notify("🚀 window open — trading loop starting NOW")
+
+        deadlines = []
         window = ""
         if max_hours:
-            deadline = datetime.now(timezone.utc) + timedelta(hours=max_hours)
+            deadlines.append(datetime.now(timezone.utc) + timedelta(hours=max_hours))
             window = f", {max_hours:g}h window"
+        if stop_at:
+            deadlines.append(stop_at)
+            window = f", until {stop_at:%Y-%m-%d %H:%M} UTC"
+        deadline = min(deadlines) if deadlines else None
         self.alerter.notify(
             f"🤖 agent online ({mode}, BSC{window}) — supervising "
             f"{len(self.cfg.tokens.watchlist)} tokens"
         )
+        self._last_report = datetime.now(timezone.utc)
         consecutive_errors = 0
         while not self._stop:
             if deadline and datetime.now(timezone.utc) >= deadline:
@@ -122,6 +154,9 @@ class Agent:
                 self.decisions.append("cycle_error", error=str(e))
                 if consecutive_errors >= 3:
                     self.alerter.notify(f"agent: {consecutive_errors} consecutive cycle errors: {e}")
+            if report_every_min and (datetime.now(timezone.utc) - self._last_report
+                                     ).total_seconds() >= report_every_min * 60:
+                self._emit_report()
             if once:
                 return
             slept = 0
@@ -129,8 +164,45 @@ class Agent:
             while slept < step and not self._stop:  # responsive to stop signals
                 time.sleep(min(2, step - slept))
                 slept += 2
+        if report_every_min:
+            self._emit_report(tag="final")  # end-of-window summary
         self.alerter.notify("🛑 agent stopped cleanly — no pending transactions")
         log.info("agent stopped cleanly")
+
+    # -- periodic operations report (#10) -------------------------------------
+    def _leaderboard(self):
+        if self._lb is None:
+            from agent.monitor.leaderboard import LeaderboardMonitor
+            self._lb = LeaderboardMonitor(
+                self.cmc, self.registry, self.cfg.tokens.allowlist,
+                our_wallet=os.environ.get("AGENT_WALLET_ADDRESS", ""))
+        return self._lb
+
+    def _emit_report(self, tag: str = "report") -> None:
+        """Digest of the period since the last report + leaderboard standing,
+        to a uniquely-named file + Telegram. Never breaks the trading loop."""
+        period_start = self._last_report or datetime.now(timezone.utc)
+        self._last_report = datetime.now(timezone.utc)
+        try:
+            digest = digest_mod.build_digest(period_start)
+            board = None
+            try:
+                board = self._leaderboard().refresh()
+            except Exception as e:  # noqa: BLE001 — board is best-effort
+                log.warning("leaderboard refresh failed: %s", e)
+            portfolio = None
+            try:
+                p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+                portfolio = {"total_usd": round(p.total_usd, 2),
+                             "holdings": {k: round(v, 2) for k, v in p.usd_values.items()}}
+            except Exception as e:  # noqa: BLE001
+                log.warning("report reconcile failed: %s", e)
+            path = digest_mod.write_report(digest, board, portfolio, tag=tag)
+            self.alerter.notify(
+                digest_mod.summary_line(digest, board, portfolio) + f"\n📄 {path.name}")
+            log.info("report written: %s", path)
+        except Exception as e:  # noqa: BLE001 — reporting must never kill trading
+            log.warning("report generation failed: %s", e)
 
     # -- canary (pre-week live validation) -----------------------------------
     def flatten(self) -> None:

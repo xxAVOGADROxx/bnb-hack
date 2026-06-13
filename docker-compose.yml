@@ -14,8 +14,16 @@ services:
       - ./data:/app/data
       # Private watchlist (gitignored) — copy it to the server first.
       - ./config/watchlist.local.yaml:/app/config/watchlist.local.yaml:ro
-    # DRY-RUN by default. Uncomment for the live trading window (22-28 jun):
-    # command: ["--live"]
+    # DRY-RUN by default. For the COMPETITION WEEK uncomment the scheduled
+    # command below and `docker compose up -d`: the service form keeps the
+    # restart watchdog (`docker compose run` containers do NOT auto-restart),
+    # and on a crash-restart the agent re-reads the window bounds — it waits
+    # again if early, trades if inside, stops cleanly if past the end.
+    # All times UTC; reports land in data/reports/ + Telegram every 12h.
+    # command: ["--live",
+    #           "--start-at", "2026-06-22T00:00Z",
+    #           "--stop-at",  "2026-06-28T23:59Z",
+    #           "--report-every-min", "720"]
     logging:
       driver: json-file
       options:
