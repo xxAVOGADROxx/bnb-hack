@@ -131,6 +131,26 @@ class CMCClient:
                 out.append((ts, float(price)))
         return out
 
+    def series_with_volume(
+        self, id_: int, interval: str = "1h", count: int = 200, ttl_s: int = 1800
+    ) -> list[tuple[str, float, float]]:
+        """Like series_historical but also carries volume_24h per bar:
+        [(iso_ts, price, volume_24h), ...] oldest first. One call yields both
+        the TA closes and the volume-confirmation series (no extra credits)."""
+        data = self._get(
+            "/v2/cryptocurrency/quotes/historical",
+            {"id": id_, "interval": interval, "count": count, "convert": "USD"},
+            ttl_s=ttl_s,
+        )
+        out = []
+        for point in data.get("quotes", []):
+            q = usd_quote(point)
+            price = q.get("price")
+            ts = point.get("timestamp") or q.get("timestamp")
+            if price is not None and ts:
+                out.append((ts, float(price), float(q.get("volume_24h") or 0.0)))
+        return out
+
     # -- layer 1: market regime -------------------------------------------
     def global_metrics(self, ttl_s: int = 1200) -> dict:
         return self._get("/v1/global-metrics/quotes/latest", {"convert": "USD"}, ttl_s=ttl_s)

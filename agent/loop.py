@@ -358,7 +358,9 @@ class Agent:
                 log.warning("no CMC id for %s — skipping", token)
                 continue
             try:
-                closes = self.cmc.closes_historical(cmc_id, interval="1h", count=200)
+                series = self.cmc.series_with_volume(cmc_id, interval="1h", count=200)
+                closes = [p for _, p, _ in series]
+                volumes = [v for _, _, v in series]
             except CMCError as e:
                 log.warning("no series for %s (%s) — skipping", token, e)
                 continue
@@ -473,6 +475,16 @@ class Agent:
                 self.decisions.append(
                     "entry_blocked", token=token, rule="edge_floor",
                     edge=round(sig.expected_move_pct, 2), floor=round(tok_floor, 2))
+                continue
+            # Volume confirmation (#11): only enter when volume_24h is rising vs
+            # its own trailing average. Gross alpha is positive but fees flip it
+            # negative; this cuts the weakest (fee-margin) entries.
+            if is_entry and not technical.volume_confirms(
+                    volumes, self.cfg.risk.vol_confirm_lookback,
+                    self.cfg.risk.vol_confirm_ratio):
+                self.decisions.append(
+                    "entry_blocked", token=token, rule="volume_confirm",
+                    vol=round(volumes[-1], 0) if volumes else 0.0)
                 continue
             if is_entry:
                 # Sizing = position cap x regime scale x conviction (#1) x the

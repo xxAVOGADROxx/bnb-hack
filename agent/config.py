@@ -47,6 +47,12 @@ class RiskConfig:
     # the margin over each token's measured friction an entry must clear.
     reentry_cooldown_h: float = 24.0
     edge_floor_margin_pct: float = 0.5
+    # Volume confirmation (#11): an entry needs volume_24h >= ratio x its own
+    # trailing-lookback-bar mean (rising attention). Backtested to cut the
+    # worst gross-negative entries and ~halve the fee-driven loss; tighter
+    # ratios overshoot. ratio<=0 disables.
+    vol_confirm_ratio: float = 1.0
+    vol_confirm_lookback: int = 24
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,8 @@ def load_config(dry_run: bool = True) -> AppConfig:
             (r.get("exits") or {}).get("liquidity_min_ref_usd", 100_000.0)),
         reentry_cooldown_h=float(r["limits"].get("reentry_cooldown_h", 0.0)),
         edge_floor_margin_pct=float(r["limits"].get("edge_floor_margin_pct", 0.0)),
+        vol_confirm_ratio=float((r.get("entry") or {}).get("vol_confirm_ratio", 1.0)),
+        vol_confirm_lookback=int((r.get("entry") or {}).get("vol_confirm_lookback", 24)),
     )
     # The real watchlist is private: config/watchlist.local.yaml (gitignored)
     # overrides the empty placeholder committed to the public repo.

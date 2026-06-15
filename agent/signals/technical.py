@@ -104,6 +104,19 @@ def vol_mult(daily_range_pct: float, vol_target_pct: float, vol_floor: float = 0
     return max(vol_floor, min(1.0, vol_target_pct / daily_range_pct))
 
 
+def volume_confirms(volumes: list[float], lookback: int = 24, ratio: float = 1.0) -> bool:
+    """Entry confirmation (#11): the latest volume_24h must be >= ratio x its
+    own trailing-`lookback`-bar mean — attention rising, not fading. Backtested
+    (scripts/vol_filter_bt.py): ratio 1.0 cut the worst gross-negative entries
+    and roughly halved the fee-driven loss; tighter ratios overshoot. ratio<=0
+    (or too short a series) disables the gate (returns True)."""
+    if ratio <= 0 or len(volumes) <= lookback:
+        return True
+    window = volumes[-lookback - 1:-1]  # the `lookback` bars BEFORE the latest
+    avg = sum(window) / len(window) if window else 0.0
+    return avg <= 0 or volumes[-1] >= ratio * avg
+
+
 def conviction_score(
     ema_fast: float, ema_slow: float, macd_hist: float, rsi_now: float,
     price: float, move: float, p: SignalParams,

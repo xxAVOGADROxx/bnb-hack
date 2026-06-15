@@ -66,3 +66,32 @@ def test_avg_daily_range():
     assert avg_daily_range_pct(flat) == 0.0
     moving = pd.Series(trend(100, 0.002, 24 * 7))
     assert avg_daily_range_pct(moving) > 0
+
+
+# -- volume confirmation (#11) ----------------------------------------------
+from agent.signals.technical import volume_confirms  # noqa: E402
+
+
+def test_volume_confirms_rising_passes():
+    # last bar above the trailing-24 mean -> entry allowed
+    vols = [100.0] * 24 + [150.0]
+    assert volume_confirms(vols, lookback=24, ratio=1.0) is True
+
+
+def test_volume_confirms_fading_blocks():
+    # last bar below the trailing mean -> entry blocked
+    vols = [100.0] * 24 + [80.0]
+    assert volume_confirms(vols, lookback=24, ratio=1.0) is False
+
+
+def test_volume_confirms_ratio_threshold():
+    # exactly at the mean passes 1.0 but fails a 1.15 ratio
+    vols = [100.0] * 24 + [100.0]
+    assert volume_confirms(vols, lookback=24, ratio=1.0) is True
+    assert volume_confirms(vols, lookback=24, ratio=1.15) is False
+
+
+def test_volume_confirms_disabled_or_short_series_passes():
+    assert volume_confirms([100.0] * 25, lookback=24, ratio=0.0) is True   # disabled
+    assert volume_confirms([100.0] * 10, lookback=24, ratio=1.0) is True   # too short
+    assert volume_confirms([0.0] * 24 + [0.0], lookback=24, ratio=1.0) is True  # no volume data

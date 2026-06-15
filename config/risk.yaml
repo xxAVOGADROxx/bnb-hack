@@ -42,6 +42,14 @@ limits:
   # Backtest: +0.3pp / -13% maxDD on top of the cooldown. 0 disables.
   edge_floor_margin_pct: 0.5
 
+entry:
+  # Volume confirmation (#11): an entry needs volume_24h >= ratio x its own
+  # trailing-lookback-bar mean (attention rising, not fading). Backtest
+  # (scripts/vol_filter_bt.py, 7d+20d): ratio 1.0 cut the worst gross-negative
+  # entries and ~halved the fee-driven loss; 1.15x/1.3x overshoot. 0 disables.
+  vol_confirm_ratio: 1.0
+  vol_confirm_lookback: 24   # bars of trailing volume_24h to average against
+
 compliance:
   daily_trade_deadline_utc: "20:00"  # force a minimal eligible trade if none yet that UTC day
   min_portfolio_usd: 5.0             # stay far above the $1 zero-hour rule
