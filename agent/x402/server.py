@@ -97,7 +97,7 @@ def _how_to_pay(base: str) -> list[str]:
         "1. Install an x402 client: npm i -g @trustwallet/cli && twak wallet create",
         f"2. Fund it with a little USD1 on BSC (asset {USD1}); you do NOT need "
         "BNB — the seller pays the settlement gas",
-        f"3. Pay & fetch: twak x402 request {base}/leaderboard "
+        f"3. Pay & fetch: twak x402 request {base}/posture "
         "--prefer-network bsc --max-payment 20000000000000000 --yes",
         "4. You receive the data plus an on-chain settlement_tx (verify on bscscan.com)",
     ]
@@ -147,22 +147,33 @@ def _produce_report() -> dict:
     return _latest_report() or {"error": "no report yet"}
 
 
+# Insertion order is the display order: the agent's OWN exact data leads
+# (/posture, /report — straight from the state the agent persists and audits),
+# the reconstructed field view (/leaderboard, an estimate) comes last.
 PRODUCTS: dict[str, dict] = {
-    "/leaderboard": {
-        "produce": _produce_leaderboard,
-        "description": "field-wide ranking of registered competition wallets: "
-                       "ESTIMATED USD value + return% vs baseline from on-chain "
-                       "balances (approximate; can change between snapshots)",
-    },
     "/posture": {
         "produce": _produce_posture,
+        "headline": True,
+        "data": "exact — the agent's own audited state",
         "description": "the agent's current risk posture: high-water mark, "
-                       "baseline, recent snapshots and regime reads",
+                       "baseline, recent snapshots and regime reads — exact, "
+                       "read straight from the state the agent persists",
     },
     "/report": {
         "produce": _produce_report,
-        "description": "the latest periodic operations report (signals, blocks, "
-                       "trades, approximate round-trip PnL)",
+        "headline": True,
+        "data": "exact — the agent's own decision record",
+        "description": "the agent's latest operations report: signals, risk "
+                       "blocks, trades and round-trip PnL — its real audited "
+                       "decision record, not an estimate",
+    },
+    "/leaderboard": {
+        "produce": _produce_leaderboard,
+        "headline": False,
+        "data": "estimate — reconstructed from on-chain balances",
+        "description": "field-wide ranking of registered competition wallets: "
+                       "ESTIMATED USD value + return% vs baseline from on-chain "
+                       "balances (approximate; can change between snapshots)",
     },
 }
 
@@ -294,7 +305,8 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                     "pay_to": pay_to,
                     "erc8004_agent_id": 1375,
                     "catalog": "/catalog (free)",
-                    "paid_endpoints": sorted(PRODUCTS),
+                    "paid_endpoints": list(PRODUCTS),
+                    "headline": [p for p, d in PRODUCTS.items() if d.get("headline")],
                     "price": f"{price_usd1} USD1 each (BSC, eip3009)",
                     "how_to_pay": _how_to_pay(base),
                     "data_disclaimer": LEADERBOARD_DISCLAIMER,
@@ -303,8 +315,9 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                 return self._send(200, {
                     "price_each": f"{price_usd1} USD1",
                     "asset": f"USD1 eip155:{CHAIN_ID} (eip3009)",
-                    "products": [{"path": p, "description": d["description"]}
-                                 for p, d in sorted(PRODUCTS.items())],
+                    "products": [{"path": p, "data": d["data"],
+                                  "description": d["description"]}
+                                 for p, d in PRODUCTS.items()],
                     "how_to_pay": _how_to_pay(base),
                     "disclaimer": LEADERBOARD_DISCLAIMER,
                 })
