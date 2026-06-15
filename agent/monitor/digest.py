@@ -93,7 +93,18 @@ def build_digest(since: datetime, now: datetime | None = None,
             for t in trades],
         "round_trips_approx": round_trips,
         "open_positions_unmatched": {k: len(v) for k, v in open_entries.items() if v},
+        "x402": _x402_summary(lo, hi),
     }
+
+
+def _x402_summary(lo: str, hi: str) -> dict:
+    """Revenue (leaderboard charges) and spend (premium pulls) for the window,
+    from the payments ledger. Best-effort: never breaks a report."""
+    try:
+        from agent.x402 import ledger
+        return ledger.summarize(lo, hi)
+    except Exception:  # noqa: BLE001
+        return {"charges": 0, "charged": 0.0, "spends": 0, "spent": 0.0, "net": 0.0}
 
 
 def write_report(digest: dict, board: list | None = None,
@@ -132,6 +143,11 @@ def summary_line(digest: dict, board: list | None = None,
     ]
     if digest["cycle_errors"]:
         parts.append(f"⚠️ {digest['cycle_errors']} cycle errors")
+    x = digest.get("x402") or {}
+    if x.get("charges") or x.get("spends"):
+        parts.append(
+            f"⚡ x402 +{x['charges']} charge ({x['charged']:.2f} USD1) "
+            f"/ -{x['spends']} spend ({x['spent']:.2f})")
     if portfolio:
         parts.append(f"💰 ${portfolio.get('total_usd', 0):.2f}")
     if board is not None:

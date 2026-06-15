@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/xxAVOGADROxx/bnb-hack?sort=semver)](https://github.com/xxAVOGADROxx/bnb-hack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen.svg)](agent/tests)
+[![Tests](https://img.shields.io/badge/tests-63%20passing-brightgreen.svg)](agent/tests)
 
 [![Last commit](https://img.shields.io/github/last-commit/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/commits/main)
 [![Commit activity](https://img.shields.io/github/commit-activity/m/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/pulse)
@@ -53,10 +53,11 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
   is also implemented (`agent/twak/client.py`).
 - **x402** — both sides of the protocol. The agent **pays**: in a grey-zone
   decision it buys CMC's premium TA per call. And it **charges**: a built-in
-  x402 V2 server (`python -m agent.x402.server`) sells the agent's live
-  competition leaderboard per call — 402 challenge, EIP-3009 signature
-  verified off-chain, settled on-chain on BSC. Any compliant client pays it
-  out of the box (`twak x402 request <url>/leaderboard`).
+  x402 V2 server (`python -m agent.x402.server`) sells a catalog of read-only
+  data products (leaderboard, risk posture, reports) per call — 402 challenge,
+  EIP-3009 signature verified off-chain, settled on-chain on BSC, each charge
+  recorded to a payments ledger and alerted. Any compliant client pays it out
+  of the box (`twak x402 request <url>/leaderboard`).
 - **BNB AI Agent SDK** — the agent has an **on-chain ERC-8004 identity**
   (agentId **1375**, BSC testnet registry `0x8004...BD9e`), minted to the same
   wallet that trades on mainnet. Registered self-custodially: the script
@@ -116,7 +117,7 @@ python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
 python -m agent --live --start-at 2026-06-22T00:00Z --stop-at 2026-06-28T23:59Z \
     --report-every-min 720      # scheduled window (exact UTC) + periodic ops reports
-pytest -q                  # 60 tests
+pytest -q                  # 63 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)

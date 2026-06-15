@@ -29,14 +29,17 @@ import argparse
 import base64
 import json
 import logging
+import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from Crypto.Hash import keccak
 
+from agent.alerts import Alerter
 from agent.chain import Rpc
 from agent.config import DATA_DIR, ROOT
 from agent.keys import AGENT_WALLET, agent_account
+from agent.x402 import ledger
 
 log = logging.getLogger("x402.server")
 
@@ -68,6 +71,73 @@ EIP712_TYPES = {
 }
 DOMAIN = {"name": "World Liberty Financial USD", "version": "1",
           "chainId": CHAIN_ID, "verifyingContract": USD1}
+
+REPORTS_DIR = DATA_DIR / "reports"
+STATE_PATH = DATA_DIR / "state.json"
+
+
+# -- priced products -------------------------------------------------------
+# Each paid endpoint is one entry: a producer reading an artefact the agent
+# already generates. Adding a product is one line here + a producer — the
+# 402/verify/settle rail is shared, so the offering expands with no new signing
+# surface (see docs/X402.md).
+def _produce_leaderboard() -> dict:
+    return (json.loads(BOARD_PATH.read_text())
+            if BOARD_PATH.exists() else {"error": "no snapshot yet"})
+
+
+def _produce_posture() -> dict:
+    """Current risk posture: portfolio value, drawdown high-water mark, and
+    the latest regime read — derived from state the agent already persists."""
+    state = json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
+    latest = _latest_report() or {}
+    return {
+        "high_water_mark_usd": state.get("high_water_mark_usd"),
+        "baseline_usd": state.get("baseline_usd"),
+        "snapshots": (state.get("snapshots") or [])[-3:],
+        "recent_regimes": latest.get("digest", {}).get("regimes", {}),
+        "as_of": latest.get("generated"),
+    }
+
+
+def _latest_report() -> dict | None:
+    if not REPORTS_DIR.exists():
+        return None
+    files = sorted(REPORTS_DIR.glob("*.json"))
+    if not files:
+        return None
+    try:
+        return json.loads(files[-1].read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _produce_report() -> dict:
+    return _latest_report() or {"error": "no report yet"}
+
+
+PRODUCTS: dict[str, dict] = {
+    "/leaderboard": {
+        "produce": _produce_leaderboard,
+        "description": "field-wide ranking of registered competition wallets: "
+                       "USD value + return% vs baseline, on-chain truth",
+    },
+    "/posture": {
+        "produce": _produce_posture,
+        "description": "the agent's current risk posture: high-water mark, "
+                       "baseline, recent snapshots and regime reads",
+    },
+    "/report": {
+        "produce": _produce_report,
+        "description": "the latest periodic operations report (signals, blocks, "
+                       "trades, approximate round-trip PnL)",
+    },
+}
+
+
+def _match_product(path: str) -> str | None:
+    base = "/" + path.lstrip("/").split("?", 1)[0].rstrip("/")
+    return base if base in PRODUCTS else None
 
 
 def payment_requirements(price_atomic: int) -> dict:
@@ -162,7 +232,7 @@ def settle(rpc: Rpc, acct, auth: dict) -> str:
     raise RuntimeError(f"settlement not confirmed in time: {tx_hash}")
 
 
-def make_handler(price_atomic: int, rpc: Rpc, acct):
+def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = None):
     requirements_b64 = base64.b64encode(
         json.dumps(payment_requirements(price_atomic)).encode()).decode()
 
@@ -181,27 +251,38 @@ def make_handler(price_atomic: int, rpc: Rpc, acct):
             log.info("%s %s", self.address_string(), fmt % args)
 
         def do_GET(self):  # noqa: N802
+            price_usd1 = price_atomic / 10 ** USD1_DECIMALS
             if self.path.rstrip("/") in ("", "/index.html"):
                 return self._send(200, {
-                    "service": "bnb-hack-1337 — x402-gated competition leaderboard",
+                    "service": "bnb-hack-1337 — x402-gated agent data API",
                     "agent": AGENT_WALLET,
                     "erc8004_agent_id": 1375,
-                    "paid_endpoint": "/leaderboard",
-                    "price": f"{price_atomic / 10 ** USD1_DECIMALS} USD1 (BSC, eip3009)",
+                    "catalog": "/catalog (free)",
+                    "paid_endpoints": sorted(PRODUCTS),
+                    "price": f"{price_usd1} USD1 each (BSC, eip3009)",
                     "how_to_pay": "x402 V2 — e.g.: twak x402 request "
                                   "<this-url>/leaderboard --prefer-network bsc --yes",
-                    "data": "field-wide ranking of registered competition wallets: "
-                            "USD value + return% vs window baseline, on-chain truth",
                 })
-            if not self.path.startswith("/leaderboard"):
-                return self._send(404, {"error": "unknown path"})
+            if self.path.rstrip("/") == "/catalog":  # free product discovery
+                return self._send(200, {
+                    "price_each": f"{price_usd1} USD1",
+                    "asset": f"USD1 eip155:{CHAIN_ID} (eip3009)",
+                    "products": [{"path": p, "description": d["description"]}
+                                 for p, d in sorted(PRODUCTS.items())],
+                })
+
+            product = _match_product(self.path)
+            if product is None:
+                return self._send(404, {"error": "unknown path",
+                                        "see": "/catalog"})
 
             header = (self.headers.get("X-PAYMENT")
                       or self.headers.get("PAYMENT-SIGNATURE"))
             if not header:
                 return self._send(
                     402, {"error": "Payment required — see payment-required header "
-                                   "(x402 V2). Pay with: twak x402 request"},
+                                   "(x402 V2). Pay with: twak x402 request",
+                          "product": product},
                     {"payment-required": requirements_b64})
             try:
                 auth = verify_payment(header, price_atomic)
@@ -214,14 +295,23 @@ def make_handler(price_atomic: int, rpc: Rpc, acct):
                 log.error("settlement failed: %s", e)
                 return self._send(502, {"error": f"settlement failed: {e}"})
 
-            log.info("paid by %s -> %s", auth["from"], tx_hash)
-            board = (json.loads(BOARD_PATH.read_text())
-                     if BOARD_PATH.exists() else {"error": "no snapshot yet"})
+            log.info("paid by %s for %s -> %s", auth["from"], product, tx_hash)
+            # Record revenue + alert (both best-effort: never fail the response).
+            try:
+                ledger.record_charge(price_usd1, "USD1", auth["from"], product, tx_hash)
+            except Exception as e:  # noqa: BLE001
+                log.warning("ledger write failed: %s", e)
+            if alerter:
+                alerter.notify(
+                    f"💰 x402 charge {price_usd1} USD1 for {product}\n"
+                    f"from {auth['from'][:10]}…  tx {tx_hash[:14]}…")
+
+            data = PRODUCTS[product]["produce"]()
             response_b64 = base64.b64encode(json.dumps({
                 "success": True, "network": f"eip155:{CHAIN_ID}",
                 "transaction": tx_hash}).encode()).decode()
-            return self._send(200, {"paid_by": auth["from"],
-                                    "settlement_tx": tx_hash, "leaderboard": board},
+            return self._send(200, {"paid_by": auth["from"], "product": product,
+                                    "settlement_tx": tx_hash, "data": data},
                               {"X-PAYMENT-RESPONSE": response_b64})
 
     return Handler
@@ -240,10 +330,13 @@ def main() -> None:
     load_dotenv(ROOT / ".env")
     acct = agent_account()  # verifies the derived address == agent wallet
     price_atomic = int(args.price_usd1 * 10 ** USD1_DECIMALS)
-    log.info("x402 server on %s:%d — selling /leaderboard at %.4f USD1 to %s",
-             args.host, args.port, args.price_usd1, acct.address)
+    alerter = Alerter(os.environ.get("TELEGRAM_BOT_TOKEN"),
+                      os.environ.get("TELEGRAM_CHAT_ID"))
+    log.info("x402 server on %s:%d — selling %s at %.4f USD1 each to %s",
+             args.host, args.port, ",".join(sorted(PRODUCTS)), args.price_usd1,
+             acct.address)
     ThreadingHTTPServer((args.host, args.port),
-                        make_handler(price_atomic, Rpc(), acct)).serve_forever()
+                        make_handler(price_atomic, Rpc(), acct, alerter)).serve_forever()
 
 
 if __name__ == "__main__":

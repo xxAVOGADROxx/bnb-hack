@@ -176,6 +176,20 @@ directional, the *relative* comparisons as the signal.
   between days — the LLM stays out of the tick loop.
 
 
+### x402 catalog, payments ledger, and revenue alerts (#12)
+- The charge server now serves a **catalog** of read-only products, not just the
+  leaderboard: `GET /catalog` (free) lists them; `/leaderboard`, `/posture`, and
+  `/report` are each priced. A product is one `PRODUCTS` entry plus a producer —
+  the 402/verify/settle rail is shared, so the offering expands with no new
+  signing surface.
+- **Payments ledger** (`agent/x402/ledger.py`, `data/payments.jsonl`): one
+  append-only record of money in (settled charges) and out (premium spends).
+  Both sides write to it; the periodic report reads it, so each report shows
+  x402 revenue and spend next to trades.
+- **Revenue alerts**: the server alerts Telegram on each settled charge
+  (`💰 x402 charge …`), so income lands in the same channel as trade alerts.
+- Tests: ledger record/summarize, window filter, corrupt-line safety (+3).
+
 ### The agent charges x402, not just pays it (#8)
 - New x402 V2 **server** (`agent/x402/server.py`): sells the read-only
   competition leaderboard at 0.01 USD1/call. Speaks the same dialect as CMC's

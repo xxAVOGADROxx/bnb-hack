@@ -144,11 +144,18 @@ def mcp_paid_call(twak: AnyTwak, decisions: DecisionLog, tool: str, arguments: d
     if result.get("dry_run"):
         decisions.append("x402_skipped_dry_run", tool=tool, arguments=arguments)
         return None
+    payment_hash = result.get("paymentHash") or result.get("hash")
     decisions.append(
-        "x402_paid",
-        tool=tool, arguments=arguments,
-        payment_hash=result.get("paymentHash") or result.get("hash"),
+        "x402_paid", tool=tool, arguments=arguments, payment_hash=payment_hash,
     )
+    # Record the spend so the report shows x402 cost next to revenue. Cost-aware
+    # by design: this path only fires on a grey-zone tie-break (<= one call).
+    try:
+        from agent.x402 import ledger
+        ledger.record_spend(0.01, PREFERRED_NETWORK.upper(), CMC_X402_MCP,
+                            f"premium:{tool}", str(payment_hash or ""))
+    except Exception as e:  # noqa: BLE001 — accounting must never break trading
+        log.warning("spend ledger write failed: %s", e)
     payload = _unwrap_mcp(result)
     if payload is None:
         # Keep the raw response: first paid calls calibrate the parser.
