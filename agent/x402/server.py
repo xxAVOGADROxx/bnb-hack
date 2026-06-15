@@ -80,14 +80,41 @@ REPORTS_DIR = DATA_DIR / "reports"
 STATE_PATH = DATA_DIR / "state.json"
 
 
+# Honesty disclosure travels WITH the data: the leaderboard is reconstructed
+# from on-chain balances at snapshot time, so USD values and rankings are
+# estimates that can shift between snapshots. Buyers see this in the paid
+# payload and before paying (catalog + index).
+LEADERBOARD_DISCLAIMER = (
+    "ESTIMATE — leaderboard USD values and rankings are derived from on-chain "
+    "balances at snapshot time and are approximate; exact amounts and positions "
+    "can change between snapshots. Informational only, not financial advice."
+)
+
+
+def _how_to_pay(base: str) -> list[str]:
+    """Plain steps any buyer follows to connect and pay (shown at / and /catalog)."""
+    return [
+        "1. Install an x402 client: npm i -g @trustwallet/cli && twak wallet create",
+        f"2. Fund it with a little USD1 on BSC (asset {USD1}); you do NOT need "
+        "BNB — the seller pays the settlement gas",
+        f"3. Pay & fetch: twak x402 request {base}/leaderboard "
+        "--prefer-network bsc --max-payment 20000000000000000 --yes",
+        "4. You receive the data plus an on-chain settlement_tx (verify on bscscan.com)",
+    ]
+
+
 # -- priced products -------------------------------------------------------
 # Each paid endpoint is one entry: a producer reading an artefact the agent
 # already generates. Adding a product is one line here + a producer — the
 # 402/verify/settle rail is shared, so the offering expands with no new signing
 # surface (see docs/X402.md).
 def _produce_leaderboard() -> dict:
-    return (json.loads(BOARD_PATH.read_text())
-            if BOARD_PATH.exists() else {"error": "no snapshot yet"})
+    if not BOARD_PATH.exists():
+        return {"error": "no snapshot yet"}
+    data = json.loads(BOARD_PATH.read_text())
+    if isinstance(data, dict):
+        data["disclaimer"] = LEADERBOARD_DISCLAIMER
+    return data
 
 
 def _produce_posture() -> dict:
@@ -124,7 +151,8 @@ PRODUCTS: dict[str, dict] = {
     "/leaderboard": {
         "produce": _produce_leaderboard,
         "description": "field-wide ranking of registered competition wallets: "
-                       "USD value + return% vs baseline, on-chain truth",
+                       "ESTIMATED USD value + return% vs baseline from on-chain "
+                       "balances (approximate; can change between snapshots)",
     },
     "/posture": {
         "produce": _produce_posture,
@@ -257,6 +285,8 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
 
         def do_GET(self):  # noqa: N802
             price_usd1 = price_atomic / 10 ** USD1_DECIMALS
+            host = self.headers.get("Host", "")
+            base = f"https://{host}" if host else "<this-url>"
             if self.path.rstrip("/") in ("", "/index.html"):
                 return self._send(200, {
                     "service": "bnb-hack-1337 — x402-gated agent data API",
@@ -266,8 +296,8 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                     "catalog": "/catalog (free)",
                     "paid_endpoints": sorted(PRODUCTS),
                     "price": f"{price_usd1} USD1 each (BSC, eip3009)",
-                    "how_to_pay": "x402 V2 — e.g.: twak x402 request "
-                                  "<this-url>/leaderboard --prefer-network bsc --yes",
+                    "how_to_pay": _how_to_pay(base),
+                    "data_disclaimer": LEADERBOARD_DISCLAIMER,
                 })
             if self.path.rstrip("/") == "/catalog":  # free product discovery
                 return self._send(200, {
@@ -275,6 +305,8 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                     "asset": f"USD1 eip155:{CHAIN_ID} (eip3009)",
                     "products": [{"path": p, "description": d["description"]}
                                  for p, d in sorted(PRODUCTS.items())],
+                    "how_to_pay": _how_to_pay(base),
+                    "disclaimer": LEADERBOARD_DISCLAIMER,
                 })
 
             product = _match_product(self.path)

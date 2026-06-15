@@ -9,6 +9,10 @@ data/
 # Private strategy selection — never publish the real watchlist
 config/watchlist.local.yaml
 
+# Local operational demo script (server-specific: domain, wallet addresses) —
+# kept in the working tree, never committed.
+DEMO.md
+
 # Python
 __pycache__/
 *.pyc
