@@ -1,8 +1,16 @@
 [project]
 name = "bnb-hack-agent"
-version = "0.1.0"
+version = "1.0.0"
 description = "Autonomous self-custody trading agent on BSC: CMC signals -> deterministic strategy -> TWAK local-signing execution"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+readme = "README.md"
+keywords = ["trading-agent", "bsc", "bnb-chain", "coinmarketcap", "trust-wallet", "x402", "self-custody"]
+
+[project.urls]
+Homepage = "https://github.com/xxAVOGADROxx/bnb-hack"
+Repository = "https://github.com/xxAVOGADROxx/bnb-hack"
+Changelog = "https://github.com/xxAVOGADROxx/bnb-hack/blob/main/CHANGELOG.md"
 dependencies = [
     "requests>=2.31",
     "PyYAML>=6.0",

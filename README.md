@@ -1,4 +1,21 @@
-# BNB Hack — Autonomous Self-Custody Trading Agent on BSC
+<div align="center">
+
+<img src="assets/full_waso_lightpng.svg" alt="logo" width="320" />
+
+# Autonomous Self-Custody Trading Agent on BSC
+
+[![CI](https://github.com/xxAVOGADROxx/bnb-hack/actions/workflows/ci.yml/badge.svg)](https://github.com/xxAVOGADROxx/bnb-hack/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/xxAVOGADROxx/bnb-hack?sort=semver)](https://github.com/xxAVOGADROxx/bnb-hack/releases)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen.svg)](agent/tests)
+
+[![Last commit](https://img.shields.io/github/last-commit/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/commits/main)
+[![Commit activity](https://img.shields.io/github/commit-activity/m/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/pulse)
+[![Downloads](https://img.shields.io/github/downloads/xxAVOGADROxx/bnb-hack/total)](https://github.com/xxAVOGADROxx/bnb-hack/releases)
+[![Stars](https://img.shields.io/github/stars/xxAVOGADROxx/bnb-hack?style=flat)](https://github.com/xxAVOGADROxx/bnb-hack/stargazers)
+
+</div>
 
 An autonomous trading agent for the **BNB Hack: AI Trading Agent Edition**
 (CoinMarketCap × Trust Wallet × BNB Chain). It runs unattended for the
@@ -116,6 +133,17 @@ docker compose up -d --build              # starts the agent, dry-run
 docker compose run --rm agent --max-hours 6   # bounded test window
 ```
 
+## Documentation
+
+Full reference lives in [`docs/`](docs/README.md):
+
+- [Architecture](docs/ARCHITECTURE.md) — signal → strategy → risk → execution.
+- [Strategy & risk mechanisms](docs/STRATEGY.md) — what's enforced, and why.
+- [x402 micropayments](docs/X402.md) — paying for data and charging for it.
+- [Deployment](deploy/DEPLOY.md) · [Test window](deploy/WINDOW.md)
+- Governance: [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+  · [Security](SECURITY.md) · [Maintainers](MAINTAINERS.md)
+
 ## Evolution
 
 See [`CHANGELOG.md`](CHANGELOG.md) for how the strategy and execution have
@@ -145,3 +173,19 @@ matured (with backtest evidence for each model change).
   Docker). No custodial component anywhere in the loop; spot execution on
   non-custodial DEX liquidity only.
 - The wallet is treated as a hot wallet, funded with competition capital only.
+
+For private disclosure of vulnerabilities, see [`SECURITY.md`](SECURITY.md).
+
+## Sponsors
+
+Built for the **BNB Hack: AI Trading Agent Edition**, using all three sponsor
+stacks:
+
+- [**CoinMarketCap for Agent**](https://coinmarketcap.com/api/agent/) — signals: regime, Fear & Greed, technicals, DEX liquidity.
+- [**Trust Wallet Agent Kit**](https://portal.trustwallet.com/) — sole execution layer, self-custody local signing, x402.
+- [**BNB AI Agent SDK**](https://github.com/bnb-chain/bnbagent-sdk) — ERC-8004 on-chain agent identity.
+
+## License
+
+[MIT](LICENSE) © 2026 xxAVOGADROxx. Includes a trading-risk disclaimer — this
+software moves real funds; use at your own risk.
