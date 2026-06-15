@@ -41,6 +41,25 @@ docker compose run --rm agent --live --canary
      (the agent logs a warning and, in LIVE mode, Telegram-alerts) — the
      re-entry cooldown still applies, but regenerate it before the live week.
 
+## Pre-week re-calibration (run once, ~June 20, ON THE SERVER)
+
+One command runs the whole battery and regenerates the private files the live
+loop reads, with a backup + an old→new diff so it's reversible:
+
+```bash
+.venv/bin/python scripts/recalibrate.py
+```
+
+It: runs `pytest` (aborts on failure) → backs up the current
+`config/watchlist.local.yaml` + `data/liquidity_report.json` to
+`data/backups/<ts>/` → re-measures real BSC round-trip friction and
+**regenerates the watchlist + edge floors** → reports satellite candidates
+(friction + liquidity-sentinel coverage, never auto-added) → re-runs the
+backtest / volume-filter / forecast on fresh data → prints a GO/NO-GO summary
+and the manual runbook (fund → `rm data/state.json` → register → canary →
+flip `--live`). Nothing is committed or set live; **review the watchlist diff**
+(revert from the backup if it looks wrong) before going live.
+
 ## Option A — Docker Compose (recommended)
 
 ```bash

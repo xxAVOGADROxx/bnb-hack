@@ -75,6 +75,13 @@ to `data/decisions.jsonl`. The risk engine is **fail-closed**:
 - **liquidity sentinel**: a held token's DEX pool draining ≥40% below its
   entry baseline forces a defensive exit (rug/LP-migration protection,
   CMC DEX API + deterministic CREATE2 pool derivation)
+- **anti-whipsaw**: a re-entry cooldown after each exit plus a per-token edge
+  floor (an entry must clear that token's own *measured* round-trip friction,
+  not just a global minimum) — friction is the dominant cost, so weak entries
+  are cut, not taken
+- **volume confirmation**: an entry needs `volume_24h` rising vs its own
+  trailing average (attention confirming the setup); backtested to roughly
+  halve the fee-driven loss by dropping the weakest entries
 - ≥1 trade/day compliance automation and a portfolio-floor check every cycle
 - **restart-safe** (reconcile from chain) and **clean shutdown** (finishes the
   in-flight cycle, exits with no pending transaction)
@@ -92,7 +99,7 @@ python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
 python -m agent --live --start-at 2026-06-22T00:00Z --stop-at 2026-06-28T23:59Z \
     --report-every-min 720      # scheduled window (exact UTC) + periodic ops reports
-pytest -q                  # 55 tests
+pytest -q                  # 60 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)

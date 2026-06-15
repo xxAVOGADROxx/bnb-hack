@@ -6,6 +6,27 @@ directional, the *relative* comparisons as the signal.
 
 ## Strategy model
 
+### Volume confirmation entry gate (#11)
+- **An entry now requires `volume_24h` ≥ its own trailing-24-bar mean** —
+  attention rising, not fading. One `/quotes/historical` call already carries
+  the volume series alongside the TA closes, so this costs zero extra credits
+  (`agent/cmc/client.py::series_with_volume`). Config:
+  `risk.yaml::entry.vol_confirm_ratio` (1.0) / `vol_confirm_lookback` (24).
+  *Why:* across the 7d and 20d windows the strategy's GROSS PnL is mildly
+  positive but ~1.5% round-trip fees flip it negative — the binding constraint
+  is friction, not signal. *Evidence (vol≥1.0×, both windows):* cut the worst
+  gross-negative entries and roughly **halved the fee-driven net loss**
+  (20d −0.65%→−0.16%, gross +9.65→+26.11; 7d −0.38%→−0.13%). Tighter ratios
+  (1.15×/1.3×) overshoot and kill good trades — 1.0× is the robust setting.
+  Backtests: `scripts/vol_filter_bt.py`, `scripts/trade_split.py`.
+- **Three more mechanisms evaluated and REJECTED by backtest** (the backtest
+  decides, both ways): long-term trend filter (price>EMA100/200 *removed the
+  winners* — in this bear/fear regime the edge is mean-reversion, not
+  trend-following; `scripts/trend_filter_bt.py`); ATR/volatility-adaptive stop
+  (the stop never binds — 0 stops fire, the EMA signal exit triggers first — so
+  adaptive width changes nothing; `scripts/atr_stop_bt.py`); watchlist
+  expansion #5 (all candidates reduced returns). Kept the simple fixed 8% stop.
+
 ### Anti-whipsaw: re-entry cooldown + per-token edge floor (#9)
 - **24h re-entry cooldown.** After closing a token, no re-entry for 24h. The
   same-day BUY→exit→BUY churn pays double friction for ~zero edge.
