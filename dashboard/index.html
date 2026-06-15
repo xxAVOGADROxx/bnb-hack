@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSC Agent Wallet Inspector</title>
+  <meta name="description" content="Live BSC wallet holdings inspector for the BNB Hack autonomous trading agent." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <img src="logo.svg" alt="logo" class="logo" />
+    <h1>BSC Wallet Inspector</h1>
+    <p class="sub">Live on-chain holdings for any BNB Smart Chain wallet — read-only,
+      keyless, client-side. Built for the autonomous self-custody trading agent.</p>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <input id="wallet" type="text" spellcheck="false"
+             placeholder="0x… wallet address" />
+      <button id="go">Inspect</button>
+      <label class="auto"><input type="checkbox" id="auto" /> auto (30s)</label>
+    </div>
+    <p class="hint">Prefilled with the competition agent wallet. Paste any BSC
+      address to inspect it.</p>
+  </section>
+
+  <section id="status" class="status"></section>
+
+  <section id="summary" class="summary hidden">
+    <div class="total">
+      <span class="label">portfolio value</span>
+      <span id="total" class="value">—</span>
+    </div>
+    <div class="meta">
+      <span id="count"></span>
+      <span id="updated"></span>
+    </div>
+  </section>
+
+  <section class="tablewrap">
+    <table id="holdings" class="hidden">
+      <thead>
+        <tr><th>Token</th><th class="num">Balance</th><th class="num">Price (USD)</th>
+            <th class="num">Value (USD)</th><th class="num">Weight</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <span>Read-only. Prices via DexScreener; balances via public BSC RPC.</span>
+    <span><a id="repo" href="https://github.com/xxAVOGADROxx/bnb-hack">repository</a> ·
+      <a id="scan" href="#" target="_blank" rel="noopener">view on BscScan</a></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

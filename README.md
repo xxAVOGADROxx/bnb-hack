@@ -134,12 +134,28 @@ docker compose up -d --build              # starts the agent, dry-run
 docker compose run --rm agent --max-hours 6   # bounded test window
 ```
 
+## Live dashboard
+
+A static, keyless **[BSC Wallet Inspector](dashboard/)** (GitHub Pages) shows the
+live on-chain holdings and USD value of any BSC wallet — prefilled with the
+competition agent wallet. Balances come from a public RPC, prices from
+DexScreener; nothing server-side, no keys. Deployed from [`dashboard/`](dashboard/)
+via GitHub Actions.
+
+## Benchmarks
+
+Honest backtest results (with caveats) are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md):
+the `trend` strategy preserves capital in the current bear regime (7d −0.13%,
+20d −0.16% net) and is net positive over the year at modeled cost; the binding
+constraint is fees, not signal. Every number is reproducible from `scripts/`.
+
 ## Documentation
 
 Full reference lives in [`docs/`](docs/README.md):
 
 - [Architecture](docs/ARCHITECTURE.md) — signal → strategy → risk → execution.
-- [Strategy & risk mechanisms](docs/STRATEGY.md) — what's enforced, and why.
+- [Strategy & risk mechanisms](docs/STRATEGY.md) · [Strategy plugins](docs/STRATEGIES.md)
+  · [Benchmarks](docs/BENCHMARKS.md)
 - [x402 micropayments](docs/X402.md) — paying for data and charging for it.
 - [Deployment](deploy/DEPLOY.md) · [Test window](deploy/WINDOW.md)
 - Governance: [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
