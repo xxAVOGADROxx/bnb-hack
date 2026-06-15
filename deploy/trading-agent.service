@@ -6,12 +6,13 @@ Description=BNB Hack autonomous trading agent (BSC, self-custody via TWAK)
 After=network-online.target
 Wants=network-online.target
 
+# Replace <user> and the paths below with your deployment user and clone path.
 [Service]
 Type=simple
-User=broncano
-WorkingDirectory=/home/broncano/apps/bnb-hack
-EnvironmentFile=/home/broncano/apps/bnb-hack/.env
-ExecStart=/home/broncano/apps/bnb-hack/.venv/bin/python -m agent --live
+User=<user>
+WorkingDirectory=/opt/bnb-hack
+EnvironmentFile=/opt/bnb-hack/.env
+ExecStart=/opt/bnb-hack/.venv/bin/python -m agent --live
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
