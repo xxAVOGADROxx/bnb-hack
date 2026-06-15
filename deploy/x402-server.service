@@ -1,0 +1,26 @@
+# systemd unit for the x402 data-selling server (the agent's CHARGE side).
+# SEPARATE from trading-agent.service and from the trading wallet: it signs
+# settlements with a DEDICATED payments wallet (X402_WALLET_PASSWORD ->
+# ~/.twak/x402-wallet.json), so it never holds the trading key and never
+# contends for the trading nonce. Bound to localhost; exposed only via the
+# outbound-only Cloudflare named tunnel (cloudflared.service) — no inbound port.
+[Unit]
+Description=BNB Hack x402 data-selling server (read-only, localhost-bound)
+After=network-online.target
+Wants=network-online.target
+
+# Replace <user> and the paths below with your deployment user and clone path.
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/opt/bnb-hack
+EnvironmentFile=/opt/bnb-hack/.env
+ExecStart=/opt/bnb-hack/.venv/bin/python -m agent.x402.server --host 127.0.0.1 --port 8402
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

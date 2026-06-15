@@ -1,0 +1,19 @@
+# Cloudflare NAMED tunnel config for the x402 server.
+# Outbound-only: no inbound firewall port is ever opened. cloudflared dials out
+# to Cloudflare and Cloudflare proxies bnb-hack.<your-domain> -> localhost:8402.
+#
+# Setup (once, see deploy/DEPLOY.md "x402 public endpoint"):
+#   cloudflared tunnel login                       # authorize the zone
+#   cloudflared tunnel create bnb-hack             # writes <UUID>.json creds
+#   cloudflared tunnel route dns bnb-hack bnb-hack.<your-domain>
+# Then put this file at /etc/cloudflared/config.yml (or ~/.cloudflared/config.yml),
+# filling in the tunnel UUID and credentials path that `create` printed.
+
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: bnb-hack.<your-domain>
+    service: http://127.0.0.1:8402
+  # Everything else gets a 404 — the tunnel exposes ONLY the x402 host.
+  - service: http_status:404

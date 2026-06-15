@@ -19,9 +19,13 @@ USD1 (World Liberty Financial USD, 18 dp) is the asset because it is the
 BSC stable that implements EIP-3009 — the simplest spec-compliant scheme
 (no Permit2 spender contract needed). GET / is free and documents all this.
 
-Usage: .venv/bin/python -m agent.x402.server [--port 8402] [--price-usd1 0.01]
-Needs TWAK_WALLET_PASSWORD in .env (settlement signer — in-memory key, see
-agent/keys.py) and a few cents of BNB for settlement gas.
+Usage: .venv/bin/python -m agent.x402.server [--port 8402] [--host 127.0.0.1]
+       [--price-usd1 0.01]
+Needs X402_WALLET_PASSWORD in .env — the signer is a DEDICATED payments wallet
+(its own keystore, see agent/keys.py:x402_account / scripts/create_x402_wallet.py),
+never the trading key, so settlements never contend for the trading nonce and
+this public-facing process never holds the trading key. Fund it with a few
+cents of BNB for settlement gas.
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ from Crypto.Hash import keccak
 from agent.alerts import Alerter
 from agent.chain import Rpc
 from agent.config import DATA_DIR, ROOT
-from agent.keys import AGENT_WALLET, agent_account
+from agent.keys import AGENT_WALLET, x402_account
 from agent.x402 import ledger
 
 log = logging.getLogger("x402.server")
@@ -140,7 +144,7 @@ def _match_product(path: str) -> str | None:
     return base if base in PRODUCTS else None
 
 
-def payment_requirements(price_atomic: int) -> dict:
+def payment_requirements(price_atomic: int, pay_to: str) -> dict:
     return {
         "x402Version": 2,
         "error": "Payment required",
@@ -151,7 +155,7 @@ def payment_requirements(price_atomic: int) -> dict:
             "network": f"eip155:{CHAIN_ID}",
             "asset": USD1,
             "amount": str(price_atomic),
-            "payTo": AGENT_WALLET,
+            "payTo": pay_to,
             "maxTimeoutSeconds": 60,
             "extra": {"name": DOMAIN["name"], "version": DOMAIN["version"],
                       "assetTransferMethod": "eip3009"},
@@ -159,7 +163,7 @@ def payment_requirements(price_atomic: int) -> dict:
     }
 
 
-def verify_payment(header_b64: str, price_atomic: int) -> dict:
+def verify_payment(header_b64: str, price_atomic: int, pay_to: str) -> dict:
     """Decode + verify the X-PAYMENT payload OFF-CHAIN. Returns the
     authorization dict (with signature) or raises ValueError."""
     from eth_account import Account
@@ -188,7 +192,7 @@ def verify_payment(header_b64: str, price_atomic: int) -> dict:
 
     if recovered.lower() != str(auth["from"]).lower():
         raise ValueError(f"signature recovers {recovered}, not {auth['from']}")
-    if str(auth["to"]).lower() != AGENT_WALLET.lower():
+    if str(auth["to"]).lower() != pay_to.lower():
         raise ValueError("payment not addressed to this agent")
     if int(auth["value"]) < price_atomic:
         raise ValueError(f"value {auth['value']} below price {price_atomic}")
@@ -233,8 +237,9 @@ def settle(rpc: Rpc, acct, auth: dict) -> str:
 
 
 def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = None):
+    pay_to = acct.address  # the dedicated payments wallet — receives + settles
     requirements_b64 = base64.b64encode(
-        json.dumps(payment_requirements(price_atomic)).encode()).decode()
+        json.dumps(payment_requirements(price_atomic, pay_to)).encode()).decode()
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, body: dict, headers: dict | None = None):
@@ -256,6 +261,7 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                 return self._send(200, {
                     "service": "bnb-hack-1337 — x402-gated agent data API",
                     "agent": AGENT_WALLET,
+                    "pay_to": pay_to,
                     "erc8004_agent_id": 1375,
                     "catalog": "/catalog (free)",
                     "paid_endpoints": sorted(PRODUCTS),
@@ -285,7 +291,7 @@ def make_handler(price_atomic: int, rpc: Rpc, acct, alerter: Alerter | None = No
                           "product": product},
                     {"payment-required": requirements_b64})
             try:
-                auth = verify_payment(header, price_atomic)
+                auth = verify_payment(header, price_atomic, pay_to)
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._send(402, {"error": f"invalid payment: {e}"},
                                   {"payment-required": requirements_b64})
@@ -328,7 +334,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     load_dotenv(ROOT / ".env")
-    acct = agent_account()  # verifies the derived address == agent wallet
+    acct = x402_account()  # dedicated payments wallet — never the trading key
     price_atomic = int(args.price_usd1 * 10 ** USD1_DECIMALS)
     alerter = Alerter(os.environ.get("TELEGRAM_BOT_TOKEN"),
                       os.environ.get("TELEGRAM_CHAT_ID"))
