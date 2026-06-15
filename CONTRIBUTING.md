@@ -25,7 +25,7 @@ change:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[ta,dev]"
+pip install -e ".[dev]"
 cp .env.example .env        # add CMC + TWAK credentials (never commit .env)
 pytest -q                   # the suite must pass before you start
 ```

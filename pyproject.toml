@@ -6,11 +6,6 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 readme = "README.md"
 keywords = ["trading-agent", "bsc", "bnb-chain", "coinmarketcap", "trust-wallet", "x402", "self-custody"]
-
-[project.urls]
-Homepage = "https://github.com/xxAVOGADROxx/bnb-hack"
-Repository = "https://github.com/xxAVOGADROxx/bnb-hack"
-Changelog = "https://github.com/xxAVOGADROxx/bnb-hack/blob/main/CHANGELOG.md"
 dependencies = [
     "requests>=2.31",
     "PyYAML>=6.0",
@@ -19,10 +14,15 @@ dependencies = [
     "pycryptodome>=3.20",  # keccak256 for deterministic CREATE2 pool derivation
 ]
 
+[project.urls]
+Homepage = "https://github.com/xxAVOGADROxx/bnb-hack"
+Repository = "https://github.com/xxAVOGADROxx/bnb-hack"
+Changelog = "https://github.com/xxAVOGADROxx/bnb-hack/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-ta = ["pandas-ta>=0.3.14b0"]
 dev = ["pytest>=8.0"]
 identity = ["bnbagent>=0.3", "eth-account>=0.13"]  # one-shot ERC-8004 registration
+x402 = ["eth-account>=0.13"]  # x402 server: EIP-712 verify + settlement signing
 
 [build-system]
 requires = ["setuptools>=68"]

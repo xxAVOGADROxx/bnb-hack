@@ -112,7 +112,7 @@ to `data/decisions.jsonl`. The risk engine is **fail-closed**:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[ta,dev]"
+pip install -e ".[dev]"
 cp .env.example .env       # add CMC + TWAK credentials (never commit .env)
 
 python -m agent --once     # one DRY-RUN cycle (real signals, no tx signed)
