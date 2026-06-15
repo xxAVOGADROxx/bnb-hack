@@ -57,4 +57,4 @@ so the audit trail records which strategy produced each call.
 | Name | Status | Idea |
 | ---- | ------ | ---- |
 | `trend` | **default, validated** | EMA structure + MACD + RSI; all conditions align for entry, with dynamic conviction and the x402 grey-zone tie-break. |
-| `mean_reversion` | experimental | Buy statistically stretched oversold dips, exit on reversion to the mean. On-thesis with the current regime, but not yet through the full backtest pipeline. |
+| `mean_reversion` | backtested, rejected (example) | Naive oversold-dip buying. Head-to-head (`scripts/strategy_bt.py`) it is gross-negative and far worse than `trend` (20d −5.49%, 1-year −6.47%): it catches falling knives. Kept as a worked example of the plugin contract — do not select for production. |

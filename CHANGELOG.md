@@ -17,9 +17,11 @@ directional, the *relative* comparisons as the signal.
   strategy (the wrapper is verified faithful by a test). Select via
   `risk.yaml` (`strategy: active`) or `--strategy NAME`; the active strategy is
   logged at startup and on every `signal` decision.
-- Ships an experimental `mean_reversion` strategy (oversold-dip entries) to
-  demonstrate the contract — on-thesis with the current regime, but opt-in and
-  not yet through the backtest pipeline. See [docs/STRATEGIES.md](docs/STRATEGIES.md).
+- Ships a `mean_reversion` strategy (oversold-dip entries) as a worked example
+  of the contract. **Backtested head-to-head and REJECTED** (`scripts/strategy_bt.py`):
+  gross-negative and far worse than `trend` (20d −5.49%, 1-year −6.47% vs −0.41%
+  / −1.65%) — naive oversold buying catches falling knives. Kept as an example;
+  not for production. See [docs/STRATEGIES.md](docs/STRATEGIES.md).
 - Tests: registry list/build/unknown, trend-wrapper faithfulness, mean-reversion
   entry/exit/hold (+6); 69 total.
 

@@ -1,14 +1,16 @@
-"""Mean-reversion strategy — EXPERIMENTAL (not yet validated through the full
-backtest pipeline; the default remains `trend`).
+"""Mean-reversion strategy — BACKTESTED AND REJECTED; kept as a worked example
+of the plugin contract. The default remains `trend`.
 
-Rationale: the 1-year analysis showed that in the current bear/fear regime the
-edge is mean-reversion — oversold bounces, not breakouts (this is why the
-long-term trend filter was rejected). This strategy buys statistically stretched
-dips and exits on reversion to the mean. It is provided to demonstrate the
-plugin contract and as a candidate to backtest before the regime turns.
+Rationale tested: whether naive oversold-dip buying (RSI<=30 + below the mean)
+captures the regime's mean-reversion. It does NOT. Head-to-head on the live
+config (`scripts/strategy_bt.py`): on the meaningful windows it is gross-negative
+and far worse than `trend` — 20d -5.49% (gross -135, 5/17 stops) and 1-year
+-6.47% (14/25 stops) vs trend -0.41% / -1.65%. It catches falling knives: in a
+downtrend "oversold" gets more oversold, so the dips keep dropping into the stop.
 
-Selection is opt-in (`strategy: active: mean_reversion`); ship only after it
-clears the same evidence bar as every other mechanism — see CONTRIBUTING.md.
+The lesson refines the earlier note: SHORT-TERM mean-reversion *with momentum
+confirmation* (what `trend` already does via pullback + MACD) works; naive
+oversold buying without confirmation does not. Do not select for production.
 """
 from __future__ import annotations
 
