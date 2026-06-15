@@ -2,6 +2,12 @@
 # and every decision against these rules is logged to data/decisions.jsonl.
 # Values are starting points to be calibrated before going live.
 
+strategy:
+  # Active signal plugin (agent/strategies/registry.py). "trend" is the default
+  # and the validated one; "mean_reversion" is experimental (backtest first).
+  # Override at runtime with --strategy NAME.
+  active: trend
+
 drawdown:                  # measured from high-water mark, hourly snapshots
   alert_pct: 10.0          # notify human
   pause_entries_pct: 15.0  # no new positions

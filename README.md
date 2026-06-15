@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/xxAVOGADROxx/bnb-hack?sort=semver)](https://github.com/xxAVOGADROxx/bnb-hack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-63%20passing-brightgreen.svg)](agent/tests)
+[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen.svg)](agent/tests)
 
 [![Last commit](https://img.shields.io/github/last-commit/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/commits/main)
 [![Commit activity](https://img.shields.io/github/commit-activity/m/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/pulse)
@@ -68,7 +68,7 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
 
 | Layer | Module | Responsibility |
 |---|---|---|
-| Signal / alpha | `agent/signals/technical.py` | EMA/MACD/RSI trend-following → BUY/HOLD/EXIT + conviction + grey-zone flag |
+| Signal / alpha | `agent/strategies/` | Pluggable strategies (default `trend`: EMA/MACD/RSI → BUY/HOLD/EXIT + conviction + grey-zone); swappable via config or `--strategy` ([docs](docs/STRATEGIES.md)) |
 | Regime gate | `agent/signals/regime.py` | Global metrics + Fear&Greed → RISK_ON / CONFLICTED / RISK_OFF |
 | Macro blackout | `agent/risk/macro.py` | Pause/halve entries around scheduled macro events (PCE, Fed) |
 | Risk engine | `agent/risk/engine.py` | Fail-closed guardrails: allowlist, drawdown ladder, caps, slippage, min-edge |
@@ -117,7 +117,7 @@ python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
 python -m agent --live --start-at 2026-06-22T00:00Z --stop-at 2026-06-28T23:59Z \
     --report-every-min 720      # scheduled window (exact UTC) + periodic ops reports
-pytest -q                  # 63 tests
+pytest -q                  # 69 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)

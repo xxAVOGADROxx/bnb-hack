@@ -6,6 +6,23 @@ directional, the *relative* comparisons as the signal.
 
 ## Strategy model
 
+### Strategy plugin architecture (#13)
+- Strategies are now **pluggable**. A `Strategy` protocol + `MarketContext`
+  (`agent/strategies/base.py`) and an explicit registry
+  (`agent/strategies/registry.py`) let a new strategy drop in as one file + one
+  registry line. The universal guardrails (regime gate, volume confirmation,
+  edge floor, cooldown, sizing, stop-loss) stay in the loop and apply to
+  whatever strategy is active — the safety layer is shared, never bypassed.
+- The production trend logic is wrapped unchanged as the default `trend`
+  strategy (the wrapper is verified faithful by a test). Select via
+  `risk.yaml` (`strategy: active`) or `--strategy NAME`; the active strategy is
+  logged at startup and on every `signal` decision.
+- Ships an experimental `mean_reversion` strategy (oversold-dip entries) to
+  demonstrate the contract — on-thesis with the current regime, but opt-in and
+  not yet through the backtest pipeline. See [docs/STRATEGIES.md](docs/STRATEGIES.md).
+- Tests: registry list/build/unknown, trend-wrapper faithfulness, mean-reversion
+  entry/exit/hold (+6); 69 total.
+
 ### Volume confirmation entry gate (#11)
 - **An entry now requires `volume_24h` ≥ its own trailing-24-bar mean** —
   attention rising, not fading. One `/quotes/historical` call already carries

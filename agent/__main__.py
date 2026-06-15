@@ -51,11 +51,16 @@ def main() -> None:
                         help="DRY-RUN ONLY: size entries as if the portfolio "
                              "were this big, so test windows exercise the full "
                              "entry path (proposal -> risk engine -> quote)")
+    parser.add_argument("--strategy", default=None, metavar="NAME",
+                        help="override the active strategy plugin (default from risk.yaml)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     setup_logging(logging.DEBUG if args.verbose else logging.INFO)
     cfg = load_config(dry_run=not args.live)
+    if args.strategy:
+        import dataclasses
+        cfg = dataclasses.replace(cfg, strategy=args.strategy)
     agent = Agent(cfg, paper_equity=args.paper_equity if not args.live else 0.0)
     # Clean shutdown: finish the in-flight cycle (any swap is synchronous), then
     # exit with no pending tx. Covers `docker stop` (SIGTERM) and Ctrl-C (SIGINT).

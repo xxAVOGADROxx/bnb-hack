@@ -29,6 +29,8 @@ from agent.risk.macro import MacroCalendar
 from agent.signals import regime as regime_mod
 from agent.signals import technical
 from agent.state.reconcile import reconcile
+from agent.strategies import registry as strategy_registry
+from agent.strategies.base import MarketContext
 from agent.state.store import StateStore
 from agent.tokens import TokenRegistry
 from agent.twak.client import make_twak_client
@@ -60,6 +62,9 @@ class Agent:
         self.risk = RiskEngine(cfg.risk, cfg.tokens)
         self.alerter = Alerter(cfg.telegram_bot_token, cfg.telegram_chat_id)
         self.registry = TokenRegistry()
+        self.strategy = strategy_registry.build(cfg.strategy)  # active signal plugin
+        log.info("strategy: %s (available: %s)",
+                 self.strategy.name, ", ".join(strategy_registry.available()))
         self.macro = MacroCalendar()
         self.sentinel = LiquiditySentinel(
             self.cmc, self.store,
@@ -428,9 +433,11 @@ class Agent:
             elif self.store.entry_price(token) is not None:
                 self._position_closed(token)  # position left without us seeing the exit
 
-            sig = technical.evaluate(token, closes, holding=holding)
+            sig = self.strategy.evaluate(
+                MarketContext(token, closes, volumes, holding))
             self.decisions.append(
-                "signal", token=token, action=sig.action.value,
+                "signal", token=token, strategy=self.strategy.name,
+                action=sig.action.value,
                 conviction=round(sig.conviction, 2), grey_zone=sig.grey_zone,
                 expected_move_pct=round(sig.expected_move_pct, 2), detail=sig.reason,
             )

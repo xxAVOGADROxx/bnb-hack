@@ -71,6 +71,7 @@ class AppConfig:
     tokens: TokensConfig
     telegram_bot_token: str | None
     telegram_chat_id: str | None
+    strategy: str = "trend"  # active strategy plugin (agent/strategies/registry.py)
 
 
 def _load_yaml(name: str) -> dict:
@@ -139,4 +140,5 @@ def load_config(dry_run: bool = True) -> AppConfig:
         tokens=tokens,
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        strategy=str((r.get("strategy") or {}).get("active", "trend")),
     )
