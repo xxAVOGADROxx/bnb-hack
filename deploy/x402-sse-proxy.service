@@ -1,0 +1,24 @@
+# systemd unit for the x402 SSE proxy (pay-side unblock).
+# Injects `Accept: application/json, text/event-stream` into twak's paid x402
+# retry to CMC's MCP, which twak otherwise omits (CMC then 400s before settling).
+# Localhost-only; the agent reaches it via CMC_X402_MCP_URL in .env. No inbound
+# port, no keys — a pure header-rewriting reverse proxy.
+[Unit]
+Description=BNB Hack x402 SSE proxy (CMC MCP Accept-header fix)
+After=network-online.target
+Wants=network-online.target
+
+# Replace <user> and the paths below with your deployment user and clone path.
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/opt/bnb-hack
+ExecStart=/opt/bnb-hack/.venv/bin/python -m agent.x402.sse_proxy --host 127.0.0.1 --port 8403
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

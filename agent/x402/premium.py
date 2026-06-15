@@ -38,13 +38,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from agent.logger import DecisionLog
 from agent.twak.client import AnyTwak, TwakError
 
 log = logging.getLogger(__name__)
 
-CMC_X402_MCP = "https://mcp.coinmarketcap.com/x402/mcp"
+# Direct CMC endpoint by default. Set CMC_X402_MCP_URL to the local SSE proxy
+# (agent/x402/sse_proxy.py, e.g. http://127.0.0.1:8403/x402/mcp) to work around
+# twak's missing `Accept: text/event-stream` on the paid retry — opt-in, so the
+# default behaviour is unchanged.
+CMC_X402_MCP = os.environ.get(
+    "CMC_X402_MCP_URL", "https://mcp.coinmarketcap.com/x402/mcp")
 PREFERRED_NETWORK = "bsc"
 # Hard per-call cap in atomic units of the payment asset (CMC charges 0.01
 # USD/call; we cap at 0.02). Decimals differ per network: 18 on BSC, 6 on Base.
