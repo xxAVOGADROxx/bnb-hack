@@ -24,12 +24,25 @@ deciding with a **deterministic, fully-auditable strategy + risk engine**, and
 executing spot swaps **exclusively through the Trust Wallet Agent Kit (TWAK)**
 with **local signing** — the key never leaves the machine.
 
-```
-  CoinMarketCap for Agent          deterministic Python loop            Trust Wallet Agent Kit
-   AI-processed signals    ──►   strategy + regime + RISK ENGINE   ──►   local signing + swap
-   (regime, F&G, TA,             (code, not an LLM per tick)             (self-custody, x402)
-    macro events)                          │                                      │
-                                    full decision audit  ◄───── on-chain truth (reconcile) ──┘
+```mermaid
+flowchart LR
+    CMC["<b>CoinMarketCap for Agent</b><br/>AI-processed signals<br/>regime · Fear/Greed · TA · macro"]:::brain
+    LOOP["<b>Deterministic Python loop</b><br/>strategy + regime + RISK ENGINE<br/><i>code, not an LLM per tick</i>"]:::core
+    TWAK["<b>Trust Wallet Agent Kit</b><br/>local signing + swap<br/>self-custody · x402"]:::exec
+    CHAIN[("BSC — on-chain truth")]:::chain
+    AUDIT[("Append-only<br/>decision audit")]:::log
+
+    CMC -->|signal| LOOP
+    LOOP -->|decision| TWAK
+    TWAK -->|swap| CHAIN
+    CHAIN -.->|reconcile| LOOP
+    LOOP -.->|every rule that fired| AUDIT
+
+    classDef brain fill:#eaf2ff,stroke:#3b82f6,color:#0b2545;
+    classDef core  fill:#fff4e6,stroke:#f59e0b,color:#3a2a00;
+    classDef exec  fill:#eafbf0,stroke:#10b981,color:#04321f;
+    classDef chain fill:#f3e8ff,stroke:#a855f7,color:#2e1065;
+    classDef log   fill:#f1f5f9,stroke:#64748b,color:#0f172a;
 ```
 
 No LLM decides ticks: the live loop is deterministic code. The AI lives in the
