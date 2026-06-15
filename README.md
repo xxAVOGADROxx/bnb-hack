@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/xxAVOGADROxx/bnb-hack?sort=semver)](https://github.com/xxAVOGADROxx/bnb-hack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen.svg)](agent/tests)
+[![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen.svg)](agent/tests)
 
 [![Last commit](https://img.shields.io/github/last-commit/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/commits/main)
 [![Commit activity](https://img.shields.io/github/commit-activity/m/xxAVOGADROxx/bnb-hack)](https://github.com/xxAVOGADROxx/bnb-hack/pulse)
@@ -51,17 +51,30 @@ rejected, not traded), and **cheap** (pay for AI only on the grey-zone branch).
   sends and waits for the token approval before the swap, so first-time-token
   sells don't revert) plus **x402** micropayments; a REST `twak serve` client
   is also implemented (`agent/twak/client.py`).
-- **x402** — both sides of the protocol. The agent **charges** (working,
-  validated on-chain): a built-in x402 V2 server (`python -m agent.x402.server`)
-  sells a catalog of read-only data products (leaderboard, risk posture,
-  reports) per call — 402 challenge, EIP-3009 signature verified off-chain,
-  settled on-chain on BSC, each charge recorded to a payments ledger and
-  alerted; any compliant client pays it out of the box (`twak x402 request
-  <url>/leaderboard`). The agent also **pays** for a premium TA tie-break in
-  grey-zone decisions — implemented and proven end-to-end up to signing, but
-  currently blocked by a TWAK transport bug (its paid retry omits an `Accept`
-  header CMC's MCP requires), so it **degrades safely**: a blocked call counts
-  as "no confirmation" and the agent stays out. See [docs/X402.md](docs/X402.md).
+- **x402** — both sides of the protocol. The agent **charges**, and it's
+  **live and judge-payable right now** at a public endpoint: a built-in x402 V2
+  server (`python -m agent.x402.server`, behind a Cloudflare tunnel at
+  **`https://bnb-hack.broncano.io`**) sells a catalog of read-only data products
+  (leaderboard, risk posture, reports) for **0.01 USD1 per call** — 402
+  challenge → EIP-3009 signature verified off-chain → **settled on-chain on
+  BSC** → each charge recorded to a payments ledger and Telegram-alerted. Proven
+  end-to-end with a real settlement
+  ([tx `0xc32f54aa…`](https://bscscan.com/tx/0xc32f54aaf8e5c0cf617da7928dcacc98271aa2f65def187566511798cf8f9f6a),
+  block 104327666); any compliant client pays it out of the box (`twak x402
+  request https://bnb-hack.broncano.io/leaderboard`). Settlement gas is paid by
+  a **dedicated payments wallet**, isolated from the trading wallet so a charge
+  can never consume a trade's nonce or stall an order. The agent also **pays**
+  for a premium TA tie-break in grey-zone decisions. This was blocked by a TWAK
+  transport bug (its paid retry sends only `Accept: application/json`, but CMC's
+  MCP transport requires `application/json, text/event-stream` → HTTP 400 before
+  settlement, no funds moved). We diagnosed it and shipped a small **local SSE
+  proxy** that rewrites only that one header, forwarding the body and the x402
+  payment headers unchanged — the exact request that 400s direct from CMC returns
+  **200 through the proxy**, so the pay path is now open end-to-end without
+  waiting on a TWAK fix. It stays **fail-safe**: if the proxy is unset or down,
+  the agent falls back to "no confirmation → stay out" (it can never cause a bad
+  trade). The first pay-side settlement lands when the agent hits a live
+  grey-zone signal during trading. See [docs/X402.md](docs/X402.md).
 - **BNB AI Agent SDK** — the agent has an **on-chain ERC-8004 identity**
   (agentId **1375**, BSC testnet registry `0x8004...BD9e`), minted to the same
   wallet that trades on mainnet. Registered self-custodially: the script
@@ -121,7 +134,7 @@ python -m agent --live     # real execution (explicit opt-in)
 python -m agent --max-hours 6   # bounded, Telegram-watched window
 python -m agent --live --start-at 2026-06-22T00:00Z --stop-at 2026-06-28T23:59Z \
     --report-every-min 720      # scheduled window (exact UTC) + periodic ops reports
-pytest -q                  # 69 tests
+pytest -q                  # 73 tests
 ```
 
 Requires the [`twak` CLI](https://www.npmjs.com/package/@trustwallet/cli)
@@ -185,6 +198,12 @@ matured (with backtest evidence for each model change).
 - ERC-8004 identity: agentId **1375** on BSC testnet
   (registry `0x8004A818BFB912233c491871b3d84c89A494BD9e`, tx
   `0xe544f78d748a170134ccd3402257597759c7fb480066ddd8d3f3e5f34e86b5ad`)
+- x402 charge endpoint (**live**): `https://bnb-hack.broncano.io` — payments
+  wallet `0x7DFAA1bd437C364491D8303AC47f7B0F56a8a363` (isolated from the trading
+  wallet); on-chain settlement
+  `0xc32f54aaf8e5c0cf617da7928dcacc98271aa2f65def187566511798cf8f9f6a`
+  (EIP-3009 `transferWithAuthorization`, 0.01 USD1, block 104327666). USD1 asset:
+  `0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0D` (BSC, 18 dp).
 
 ## Security
 

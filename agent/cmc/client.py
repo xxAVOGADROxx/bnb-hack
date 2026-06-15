@@ -188,3 +188,27 @@ class CMCClient:
     # -- credit guardrail ---------------------------------------------------
     def key_info(self) -> dict:
         return self._get("/v1/key/info")
+
+    def plan_summary(self) -> dict:
+        """Flatten /v1/key/info into the fields that matter for an audit trail:
+        which tier the key is on and how much credit it has. Returns
+        {tier, credits_monthly, credits_left, rate_limit_min, is_paid}.
+
+        Heuristic for `is_paid`: the free Basic plan grants 10k monthly credits
+        and no daily allowance; any upgrade (Hobbyist+) lifts the monthly limit
+        well past that. We read the limit rather than trust a plan-name string,
+        which CMC does not always populate."""
+        info = self.key_info()
+        plan = info.get("plan", {}) or {}
+        usage = info.get("usage", {}) or {}
+        month = (usage.get("current_month", {}) or {})
+        monthly = plan.get("credit_limit_monthly")
+        return {
+            "tier": plan.get("name") or ("paid" if (monthly or 0) > 10000 else "Basic (free)"),
+            "credits_monthly": monthly,
+            "credits_left": month.get("credits_left"),
+            "credits_daily": plan.get("credit_limit_daily"),
+            "rate_limit_min": plan.get("rate_limit_minute"),
+            # 10k monthly + no daily allowance == the free Basic tier.
+            "is_paid": (monthly or 0) > 10000 or bool(plan.get("credit_limit_daily")),
+        }

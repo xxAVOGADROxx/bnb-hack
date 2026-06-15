@@ -118,6 +118,20 @@ class Agent:
         # Contract addresses are mandatory for execution — resolve up front.
         self.registry.ensure_addresses(self.cmc, universe)
 
+        # On-the-record proof of the CMC tier the agent had at boot (the Pro
+        # upgrade is time-boxed; this lands the actual entitlement in the audit
+        # trail). Never blocks startup — a key/info hiccup is logged and ignored.
+        try:
+            ks = self.cmc.plan_summary()
+            log.info("CMC key: %s | monthly credits %s (left %s), daily %s, %s/min",
+                     ks["tier"], ks["credits_monthly"], ks["credits_left"],
+                     ks["credits_daily"], ks["rate_limit_min"])
+            if not ks["is_paid"]:
+                log.info("CMC tier is free/Basic — premium history disabled, "
+                         "agent runs on standard endpoints (degrades safely)")
+        except Exception as e:  # noqa: BLE001 — diagnostics must never gate trading
+            log.warning("CMC key/info check skipped: %s", e)
+
         # Scheduled window (exact UTC): sleep until start_at, stop at stop_at.
         # Everything in UTC — no local-timezone arithmetic, ever.
         now = datetime.now(timezone.utc)

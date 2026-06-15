@@ -126,6 +126,23 @@ def main() -> None:
     else:
         run([PY, "-m", "pytest", "-q"])
 
+    # 0.5 CMC tier ---------------------------------------------------------
+    # Record which CMC entitlement the calibration ran on. The Pro upgrade is
+    # time-boxed, and the heavy historical re-measurement below is exactly what
+    # the extra credits buy — so pin it to the record. Never fatal.
+    hr("0.5 CMC key tier")
+    try:
+        from agent.cmc.client import CMCClient
+        ks = CMCClient(load_config(dry_run=True).cmc_api_key).plan_summary()
+        print(f"  tier: {ks['tier']}  ({'PAID' if ks['is_paid'] else 'free/Basic'})")
+        print(f"  monthly credits: {ks['credits_monthly']} (left {ks['credits_left']}), "
+              f"daily {ks['credits_daily']}, rate {ks['rate_limit_min']}/min")
+        if not ks["is_paid"]:
+            print("  note: free tier — historical OHLCV may be capped; the loop "
+                  "still runs on standard endpoints (degrades safely).")
+    except Exception as e:  # noqa: BLE001
+        print(f"  skipped (key/info error): {e}")
+
     # 1. backup ------------------------------------------------------------
     hr("1. backup current watchlist + liquidity report")
     backup_dir = DATA_DIR / "backups" / stamp
