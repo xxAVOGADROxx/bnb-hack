@@ -44,7 +44,10 @@ directional, the *relative* comparisons as the signal.
   trend-following; `scripts/trend_filter_bt.py`); ATR/volatility-adaptive stop
   (the stop never binds — 0 stops fire, the EMA signal exit triggers first — so
   adaptive width changes nothing; `scripts/atr_stop_bt.py`); watchlist
-  expansion #5 (all candidates reduced returns). Kept the simple fixed 8% stop.
+  expansion #5 (all candidates reduced returns); limit-at-level entry
+  (`scripts/limit_entry_bt.py` — a dip-limit improves the fill price but adverse
+  selection dominates: it misses winners and over-fills losers, 20d net
+  −0.23%→−1.44%). Kept the simple fixed 8% stop and market entry.
 
 ### Anti-whipsaw: re-entry cooldown + per-token edge floor (#9)
 - **24h re-entry cooldown.** After closing a token, no re-entry for 24h. The
