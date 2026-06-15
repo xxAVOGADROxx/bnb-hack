@@ -3,8 +3,10 @@
 *.keystore
 credentials*.json
 
-# Runtime state and logs
-data/
+# Runtime state and logs — private, EXCEPT the x402 payments ledger, which is
+# just on-chain proof of the charges (tx hashes + public wallet) and is tracked.
+data/*
+!data/payments.jsonl
 
 # Private strategy selection — never publish the real watchlist
 config/watchlist.local.yaml
