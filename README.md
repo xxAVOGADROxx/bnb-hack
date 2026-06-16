@@ -24,6 +24,8 @@ deciding with a **deterministic, fully-auditable strategy + risk engine**, and
 executing spot swaps **exclusively through the Trust Wallet Agent Kit (TWAK)**
 with **local signing** — the key never leaves the machine.
 
+> **▶ Watch the demo (≈3 min):** https://youtu.be/2Hd6MHWRu2Y
+
 ```mermaid
 flowchart LR
     CMC["<b>CoinMarketCap for Agent</b><br/>AI-processed signals<br/>regime · Fear/Greed · TA · macro"]:::brain
