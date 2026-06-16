@@ -1,2 +1,3 @@
 {"ts": "2026-06-15T06:38:31.509092+00:00", "dir": "in", "amount": 0.01, "asset": "USD1", "counterparty": "0x44dD4C2c353457fF68b164934870BB0391f9251C", "resource": "/leaderboard", "tx": "0xc32f54aaf8e5c0cf617da7928dcacc98271aa2f65def187566511798cf8f9f6a"}
 {"ts": "2026-06-15T07:10:59.899739+00:00", "dir": "in", "amount": 0.01, "asset": "USD1", "counterparty": "0x44dD4C2c353457fF68b164934870BB0391f9251C", "resource": "/leaderboard", "tx": "0x95c3a35d6819ead617e413c0aaa129b29fa0b5d5380f6070caad72e9abbfa7b5"}
+{"ts": "2026-06-16T01:44:08.517436+00:00", "dir": "in", "amount": 0.01, "asset": "USD1", "counterparty": "0x44dD4C2c353457fF68b164934870BB0391f9251C", "resource": "/leaderboard", "tx": "0xeaf0e51105c3f4e69533091e398842d1e9b392c3d3ae29162cfe2f3ab1810dd8"}
