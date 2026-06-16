@@ -129,6 +129,8 @@ class TwakClient:
         method: str = "GET",
         body: str | None = None,
         prefer_network: str | None = None,
+        prefer_asset: str | None = None,
+        prefer_method: str | None = None,
     ) -> dict:
         if self.dry_run:
             log.info("[dry-run] x402 request suppressed: %s", url)
@@ -140,6 +142,12 @@ class TwakClient:
             args += ["--body", body]
         if prefer_network:
             args += ["--prefer-network", prefer_network]
+        # Pin the asset/rail: without this twak picks an arbitrary accepted
+        # asset (e.g. United Stables we don't hold) and settlement fails.
+        if prefer_asset:
+            args += ["--prefer-asset", prefer_asset]
+        if prefer_method:
+            args += ["--prefer-method", prefer_method]
         return self._run(*args)
 
 
@@ -267,7 +275,8 @@ class TwakRestClient:
 
     # -- x402 micropayments ---------------------------------------------------
     def x402_request(self, url: str, max_payment_atomic: int, method: str = "GET",
-                     body: str | None = None, prefer_network: str | None = None) -> dict:
+                     body: str | None = None, prefer_network: str | None = None,
+                     prefer_asset: str | None = None, prefer_method: str | None = None) -> dict:
         if self.dry_run:
             log.info("[dry-run] x402 request suppressed: %s", url)
             return {"dry_run": True, "url": url}
@@ -276,6 +285,11 @@ class TwakRestClient:
             payload["body"] = body
         if prefer_network:
             payload["preferNetwork"] = prefer_network
+        # Pin the asset/rail so settlement uses a stable we actually hold.
+        if prefer_asset:
+            payload["preferAsset"] = prefer_asset
+        if prefer_method:
+            payload["preferMethod"] = prefer_method
         # TODO(x402): CMC's MCP root answers 200 to plain POSTs — the 402
         # challenge lives inside MCP JSON-RPC tool calls; frame the body
         # accordingly when the premium branch goes live.

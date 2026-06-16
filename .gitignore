@@ -21,3 +21,6 @@ __pycache__/
 .venv/
 *.egg-info/
 .pytest_cache/
+
+# Local x402 pay-side demo capture (CMC premium TA payload) — local artifact.
+cmc_ta.json

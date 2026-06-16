@@ -56,6 +56,17 @@ PREFERRED_NETWORK = "bsc"
 # USD/call; we cap at 0.02). Decimals differ per network: 18 on BSC, 6 on Base.
 MAX_PAYMENT_ATOMIC = {"bsc": 2 * 10**16, "base": 20_000}
 
+# Pin the payment asset AND rail. CMC's `accepts` list offers several BSC
+# stables (USD1, USDC, United Stables) under both eip3009 and permit2-exact;
+# left to choose, twak picks one we may not hold (United Stables -> CMC's
+# on-chain submit fails, no data). We hold USD1 on BSC and it implements
+# EIP-3009, so this rail is gasless (no Permit2 approval tx, no BNB spent by
+# the agent — CMC's facilitator pays settlement gas). Per network so a Base
+# fallback stays possible; None means "let twak choose" (e.g. base).
+PREFERRED_ASSET = {"bsc": "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0D"}  # USD1
+PREFERRED_METHOD = {"bsc": "eip3009"}
+ASSET_SYMBOL = {"bsc": "USD1"}  # for the spend ledger; matches PREFERRED_ASSET
+
 TIE_BREAK_TOOL = "get_crypto_technical_analysis"
 
 _BULLISH = ("buy", "bullish", "strong_buy", "strong buy", "uptrend")
@@ -141,6 +152,8 @@ def mcp_paid_call(twak: AnyTwak, decisions: DecisionLog, tool: str, arguments: d
             method="POST",
             body=_mcp_body(tool, arguments),
             prefer_network=PREFERRED_NETWORK,
+            prefer_asset=PREFERRED_ASSET.get(PREFERRED_NETWORK),
+            prefer_method=PREFERRED_METHOD.get(PREFERRED_NETWORK),
         )
     except TwakError as e:
         log.warning("x402 call %s failed: %s", tool, e)
@@ -158,8 +171,8 @@ def mcp_paid_call(twak: AnyTwak, decisions: DecisionLog, tool: str, arguments: d
     # by design: this path only fires on a grey-zone tie-break (<= one call).
     try:
         from agent.x402 import ledger
-        ledger.record_spend(0.01, PREFERRED_NETWORK.upper(), CMC_X402_MCP,
-                            f"premium:{tool}", str(payment_hash or ""))
+        ledger.record_spend(0.01, ASSET_SYMBOL.get(PREFERRED_NETWORK, PREFERRED_NETWORK.upper()),
+                            CMC_X402_MCP, f"premium:{tool}", str(payment_hash or ""))
     except Exception as e:  # noqa: BLE001 — accounting must never break trading
         log.warning("spend ledger write failed: %s", e)
     payload = _unwrap_mcp(result)
