@@ -27,6 +27,12 @@ log = logging.getLogger(__name__)
 REPORTS_DIR = DATA_DIR / "reports"
 DECISIONS_PATH = DATA_DIR / "decisions.jsonl"
 
+# Estimated TWAK swap-fee rates (% per swap leg). Waiver is the competition-week
+# rate; standard is the counterfactual used to show what the waiver saved. TWAK
+# doesn't return the exact on-chain fee, so this is an estimate on notional.
+SWAP_FEE_WAIVER_PCT = 0.077
+SWAP_FEE_STANDARD_PCT = 0.7
+
 
 def build_digest(since: datetime, now: datetime | None = None,
                  decisions_path: Path = DECISIONS_PATH) -> dict:
@@ -94,6 +100,24 @@ def build_digest(since: datetime, now: datetime | None = None,
         "round_trips_approx": round_trips,
         "open_positions_unmatched": {k: len(v) for k, v in open_entries.items() if v},
         "x402": _x402_summary(lo, hi),
+        "fees": _fee_summary(trades),
+    }
+
+
+def _fee_summary(trades: list[dict]) -> dict:
+    """Estimated swap-fee cost for the REAL (non-dry-run) swaps in the period,
+    and what the competition-week waiver saved vs the standard 0.7%/leg rate.
+    Estimate: fee = rate x notional per leg (TWAK returns no exact fee)."""
+    real = [t for t in trades if not t.get("dry_run")]
+    notional = sum(float(t.get("usd") or 0.0) for t in real)
+    at_waiver = notional * SWAP_FEE_WAIVER_PCT / 100
+    at_standard = notional * SWAP_FEE_STANDARD_PCT / 100
+    return {
+        "swaps": len(real),
+        "notional_usd": round(notional, 2),
+        "fee_waiver_usd": round(at_waiver, 4),
+        "fee_standard_usd": round(at_standard, 4),
+        "waiver_saved_usd": round(at_standard - at_waiver, 4),
     }
 
 
@@ -148,6 +172,11 @@ def summary_line(digest: dict, board: list | None = None,
         parts.append(
             f"⚡ x402 +{x['charges']} charge ({x['charged']:.2f} USD1) "
             f"/ -{x['spends']} spend ({x['spent']:.2f})")
+    f = digest.get("fees") or {}
+    if f.get("swaps"):
+        parts.append(
+            f"💸 swap fees ~${f['fee_waiver_usd']:.2f} (waiver) | "
+            f"saved ~${f['waiver_saved_usd']:.2f} vs standard")
     if portfolio:
         parts.append(f"💰 ${portfolio.get('total_usd', 0):.2f}")
     if board is not None:
