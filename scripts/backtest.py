@@ -223,6 +223,7 @@ def simulate(closes: dict[str, list[float]], signals, n_bars: int,
         "stop_loss_exits": stops,
         "trail_exits": trails,
         "open_at_end": len(positions),
+        "trades": closed,  # per-trade records (token/bar/entry_usd/exit_usd) for fee attribution
     }
 
 
