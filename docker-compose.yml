@@ -6,24 +6,39 @@ services:
     # Let an in-flight swap finish before docker SIGKILLs on `docker stop`.
     stop_grace_period: 90s
     env_file: .env
+    environment:
+      # Trading-week pre-step: re-measure round-trip friction at the live
+      # fee-waiver pricing before the loop starts (see deploy/entrypoint.sh).
+      # 25% of $3k capital = $750 max single position. Because this runs at
+      # CONTAINER START, bring the stack up DURING the window (on/after Jun 22)
+      # so the measurement lands at waiver pricing — not before.
+      REFRESH_FILTER_ON_START: "1"
+      FILTER_SIZE_USD: "750"
+      # Self-correcting waiver capture: re-measure friction every N hours; on a
+      # material drop (fee waiver went live) the agent exits and this service's
+      # restart policy relaunches -> entrypoint re-measures + reloads the full
+      # universe. Makes the start hour irrelevant. 0/unset disables.
+      FLOOR_REFRESH_H: "6"
     volumes:
       # TWAK credentials + encrypted keystore (created by `twak wallet create`
       # on the host). Signing stays local — nothing leaves the box.
       - ${HOME}/.twak:/root/.twak
       # Persistent state: decision log, snapshots, id map, HWM.
       - ./data:/app/data
-      # Private watchlist (gitignored) — copy it to the server first.
-      - ./config/watchlist.local.yaml:/app/config/watchlist.local.yaml:ro
-    # DRY-RUN by default. For the COMPETITION WEEK uncomment the scheduled
-    # command below and `docker compose up -d`: the service form keeps the
-    # restart watchdog (`docker compose run` containers do NOT auto-restart),
-    # and on a crash-restart the agent re-reads the window bounds — it waits
-    # again if early, trades if inside, stops cleanly if past the end.
+      # Private watchlist (gitignored). Writable: the on-start filter pre-step
+      # regenerates it from the fresh round-trip measurement.
+      - ./config/watchlist.local.yaml:/app/config/watchlist.local.yaml
+    # LIVE, window-gated. Bring up with `docker compose up -d --build` DURING the
+    # competition week. The service form keeps the restart watchdog
+    # (`docker compose run` containers do NOT auto-restart); on a crash-restart
+    # the agent re-reads the window bounds — waits if early, trades if inside,
+    # stops cleanly if past the end — and the entrypoint re-measures friction.
     # All times UTC; reports land in data/reports/ + Telegram every 12h.
-    # command: ["--live",
-    #           "--start-at", "2026-06-22T00:00Z",
-    #           "--stop-at",  "2026-06-28T23:59Z",
-    #           "--report-every-min", "720"]
+    # Before the window: trade DRY-RUN by commenting this command out.
+    command: ["--live",
+              "--start-at", "2026-06-22T00:00Z",
+              "--stop-at",  "2026-06-28T23:59Z",
+              "--report-every-min", "720"]
     logging:
       driver: json-file
       options:
