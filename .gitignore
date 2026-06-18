@@ -15,6 +15,10 @@ config/watchlist.local.yaml
 # kept in the working tree, never committed.
 DEMO.md
 
+# Private pre-competition checklist (capital, funding, position details) —
+# kept in the working tree, never committed.
+PRE_COMPETITION.md
+
 # Python
 __pycache__/
 *.pyc
