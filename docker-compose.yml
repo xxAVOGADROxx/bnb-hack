@@ -9,11 +9,13 @@ services:
     environment:
       # Trading-week pre-step: re-measure round-trip friction at the live
       # fee-waiver pricing before the loop starts (see deploy/entrypoint.sh).
-      # 25% of $3k capital = $750 max single position. Because this runs at
-      # CONTAINER START, bring the stack up DURING the window (on/after Jun 22)
-      # so the measurement lands at waiver pricing — not before.
+      # FILTER_SIZE_USD is ONLY the notional used to MEASURE round-trip cost at
+      # container start — NOT the capital. Real position sizing is %-based off
+      # the live wallet balance (config/risk.yaml: max_position_pct). Because
+      # this runs at CONTAINER START, bring the stack up DURING the window
+      # (on/after Jun 22) so the measurement lands at waiver pricing.
       REFRESH_FILTER_ON_START: "1"
-      FILTER_SIZE_USD: "750"
+      FILTER_SIZE_USD: "250"
       # "Less is more": cap watchlist inclusion at a <=0.3% waiver round-trip —
       # only the ~6 most liquid names (ETH, ZAMA, CAKE, DOGE, NEX, XRP). With a
       # 3-position concurrency cap that's ample selection, and it keeps the book
