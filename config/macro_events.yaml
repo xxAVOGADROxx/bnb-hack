@@ -9,8 +9,8 @@
 #
 # times are UTC, format "YYYY-MM-DD HH:MM".
 #
-# ⚠️ VERIFY every timestamp against the official calendars before June 21
-# (federalreserve.gov + BLS/BEA release schedules). US releases at
+# ✅ VERIFIED 2026-06-18 against the official calendars (BEA release schedule,
+# Census M3, DOL jobless claims, Conference Board). US releases at
 # 8:30 AM ET = 12:30 UTC during June (EDT); 10:00 AM ET = 14:00 UTC.
 
 defaults:
@@ -19,9 +19,10 @@ defaults:
 
 events:
   # --- competition week 2026-06-22 .. 2026-06-28 ---
-  - name: "US Consumer Confidence (Conference Board)"
-    level: medium
-    time_utc: "2026-06-23 14:00"
+  # NOTE: Conference Board Consumer Confidence is 2026-06-30 (last Tuesday),
+  # OUTSIDE the window — omitted (it would never fire). The prior 06-23 entry
+  # was incorrect and has been removed.
+  # All four below land on Thu 2026-06-25 12:30 UTC; PCE (high) dominates.
   - name: "US Durable Goods Orders (May)"
     level: medium
     time_utc: "2026-06-25 12:30"
@@ -31,6 +32,6 @@ events:
   - name: "US Initial Jobless Claims"
     level: medium
     time_utc: "2026-06-25 12:30"
-  - name: "US PCE inflation (May) — Fed's preferred gauge, new chair"
+  - name: "US PCE inflation (May) — Fed's preferred gauge"
     level: high
-    time_utc: "2026-06-26 12:30"
+    time_utc: "2026-06-25 12:30"
