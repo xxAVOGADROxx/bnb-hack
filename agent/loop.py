@@ -135,9 +135,11 @@ class Agent:
         import subprocess
         import sys
         size = os.environ.get("FILTER_SIZE_USD", "750")
+        max_cost = os.environ.get("WATCHLIST_MAX_COST_PCT", "1.5")
         try:
             subprocess.run(
-                [sys.executable, "scripts/liquidity_filter.py", "--size-usd", size],
+                [sys.executable, "scripts/liquidity_filter.py", "--size-usd", size,
+                 "--max-cost-pct", max_cost],
                 check=True, capture_output=True, text=True, timeout=600)
         except Exception as e:  # noqa: BLE001 — re-measure must never kill trading
             log.warning("floor re-measure failed (keeping current floors): %s", e)

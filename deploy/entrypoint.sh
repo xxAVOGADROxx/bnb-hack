@@ -19,8 +19,10 @@ set -uo pipefail
 # rw). A failure here must NOT block trading: the loop degrades to the existing
 # report, so we warn and carry on.
 if [ -n "${REFRESH_FILTER_ON_START:-}" ]; then
-    echo "entrypoint: re-measuring liquidity @ \$${FILTER_SIZE_USD:-750}/position before live loop"
+    echo "entrypoint: re-measuring liquidity @ \$${FILTER_SIZE_USD:-750}/position, "\
+"<=${WATCHLIST_MAX_COST_PCT:-1.5}% ceiling, before live loop"
     python scripts/liquidity_filter.py --size-usd "${FILTER_SIZE_USD:-750}" \
+        --max-cost-pct "${WATCHLIST_MAX_COST_PCT:-1.5}" \
         || echo "entrypoint: WARNING liquidity filter failed; starting on the existing report"
 fi
 

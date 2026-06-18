@@ -14,6 +14,12 @@ services:
       # so the measurement lands at waiver pricing — not before.
       REFRESH_FILTER_ON_START: "1"
       FILTER_SIZE_USD: "750"
+      # "Less is more": cap watchlist inclusion at a <=0.8% round-trip. During
+      # the waiver week this keeps only the most liquid names (~18) and drops
+      # the higher-friction tokens (FET/AVAX/INJ/AAVE/BRETT) that the regime
+      # gate only partially protects. Dial lower (0.4 -> ~9, 0.3 -> ~6) for a
+      # tighter book. (Standalone host runs default to 1.5% — unchanged.)
+      WATCHLIST_MAX_COST_PCT: "0.8"
       # Self-correcting waiver capture: re-measure friction every N hours; on a
       # material drop (fee waiver went live) the agent exits and this service's
       # restart policy relaunches -> entrypoint re-measures + reloads the full
