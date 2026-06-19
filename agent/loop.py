@@ -662,8 +662,15 @@ class Agent:
         if len(s) < 2:
             self.alerter.notify("compliance trade impossible: need two stables configured")
             return
+        # Alternate direction (ping-pong): swap whichever stable currently holds
+        # more into the other. One swap = one leg (qualifies under the >=1
+        # swap/24h rule), but always draining the heavier side keeps the two
+        # stables balanced instead of slowly bleeding the trading stable into
+        # the counted-but-not-traded one over a quiet week.
+        bal = portfolio.usd_values
+        frm, to = (s[0], s[1]) if bal.get(s[0], 0.0) >= bal.get(s[1], 0.0) else (s[1], s[0])
         self.executor.execute(
-            TradeProposal(s[0], s[1], 10.0, 0.0, False, "daily compliance trade"),
+            TradeProposal(frm, to, 10.0, 0.0, False, "daily compliance trade"),
             portfolio_usd=portfolio.total_usd,
             state=state,
             open_positions=portfolio.open_positions(s),
