@@ -95,9 +95,16 @@ class Executor:
                 )
                 log.info("rejected [price_impact]: %.2f%% > %.2f%%", impact, self.max_slippage_pct)
                 return None
+            # Exits sell ~the held token amount, but NEVER the exact full balance:
+            # the on-chain integer round-trips through a float and back, which can
+            # ask for a few wei MORE than we hold, and routers revert on a
+            # 100%-of-balance transfer ("BEP20: transfer amount exceeds balance").
+            # A 0.1% dust haircut guarantees amount < balance; the ~$0.08 left is
+            # negligible and filtered as sub-$1 dust next reconcile.
+            sell_amount = proposal.amount * 0.999 if proposal.amount else proposal.amount
             result = self.twak.swap(
                 from_ref, to_ref, proposal.usd, self.max_slippage_pct,
-                amount=proposal.amount,  # exits sell the exact held token amount
+                amount=sell_amount,
             )
         except TwakError as e:
             self.decisions.append("trade_failed", error=str(e), **base)

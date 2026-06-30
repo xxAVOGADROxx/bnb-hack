@@ -64,9 +64,11 @@ class TwakClient:
         except subprocess.TimeoutExpired as e:
             raise TwakError(f"twak timed out: {' '.join(args[:3])}") from e
         if proc.returncode != 0:
-            raise TwakError(
-                f"twak exited {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()[:500]}"
-            )
+            # The revert reason is usually on stdout while stderr carries only
+            # warnings (e.g. the --password note); surface BOTH so the real
+            # cause ("execution reverted"/"check allowance") isn't masked.
+            err = "\n".join(p for p in (proc.stderr.strip(), proc.stdout.strip()) if p)
+            raise TwakError(f"twak exited {proc.returncode}: {err[:800]}")
         try:
             return json.loads(proc.stdout)
         except json.JSONDecodeError as e:
@@ -116,10 +118,21 @@ class TwakClient:
         else:
             args = ["swap", from_token, to_token, "--usd", f"{usd:.2f}"]
         args += ["--chain", self.chain, "--slippage", str(slippage_pct)]
-        pw = os.environ.get("TWAK_WALLET_PASSWORD")
-        if pw:
-            args += ["--password", pw]  # subprocess argv, not shell history
-        return self._run(*args)
+        # Do NOT pass --password: TWAK_WALLET_PASSWORD is already in the env and
+        # twak reads it natively. Passing it on argv printed a warning to stderr
+        # that masked the real swap error in _run.
+        try:
+            return self._run(*args)
+        except TwakError as e:
+            # First spend of a token: the CLI fires the ERC-20 approval and the
+            # swap together, and the swap reverts if the approval hasn't mined
+            # ("check allowance"/"execution reverted"). The allowance is now set,
+            # so one retry after it confirms succeeds. (Mirrors TwakRestClient.)
+            if not _is_approval_race(str(e)):
+                raise
+            log.warning("swap hit approval race; waiting for allowance and retrying once")
+            time.sleep(12)
+            return self._run(*args)
 
     # -- x402 micropayments ---------------------------------------------------
     def x402_request(

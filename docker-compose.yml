@@ -16,13 +16,20 @@ services:
       # (on/after Jun 22) so the measurement lands at waiver pricing.
       REFRESH_FILTER_ON_START: "1"
       FILTER_SIZE_USD: "250"
-      # "Less is more": cap watchlist inclusion at a <=0.3% waiver round-trip —
-      # only the ~6 most liquid names (ETH, ZAMA, CAKE, DOGE, NEX, XRP). With a
-      # 3-position concurrency cap that's ample selection, and it keeps the book
-      # near the disciplined, capital-preserving profile that tested positive in
-      # the downtrend. Dial up (0.4 -> ~9, 0.8 -> ~19) for more breadth without
-      # touching code. (Standalone host runs default to 1.5% — unchanged.)
-      WATCHLIST_MAX_COST_PCT: "0.3"
+      # Cap watchlist inclusion at this round-trip cost. The 0.077%/leg fee
+      # waiver Gwen announced does NOT show in twak quotes (verified Jun 22:
+      # competition-week round-trips still measure ~1.3% with price_impact 0 =
+      # pure standard fee). At a 0.3% ceiling that admits ZERO tokens all week
+      # -> the agent freezes flat. Set to 1.5% to admit the ~5-6 most liquid
+      # names (ETH 1.30, ZEC 1.34, CAKE 1.34, DOGE 1.36, XRP 1.40). The 2%
+      # min-edge floor + 8% stop + 20% drawdown guard still gate actual trades,
+      # so this widens *eligibility*, not risk. Dial up for more breadth.
+      # 2026-06-26: 1.5 -> 2.0 for the NAVAJA (momentum sleeve). The 1.5 ceiling
+      # excluded big movers like AAVE (1.81% friction) that ran +32% in 3 days —
+      # for a momentum lottery, 1.8% friction is noise vs the move we hunt. 2.0
+      # admits AAVE + liquid majors (LINK/UNI/LTC/ADA/BCH...). Restore to 1.5
+      # when reverting off momentum. The navaja's breakout+RSI gates still decide.
+      WATCHLIST_MAX_COST_PCT: "2.0"
       # Self-correcting waiver capture: re-measure friction every N hours; on a
       # material drop (fee waiver went live) the agent exits and this service's
       # restart policy relaunches -> entrypoint re-measures + reloads the full

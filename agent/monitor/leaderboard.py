@@ -47,6 +47,19 @@ STATE_PATH = DATA_DIR / "leaderboard_state.json"
 BOARD_PATH = DATA_DIR / "leaderboard.json"
 SNAPSHOTS_PATH = DATA_DIR / "leaderboard_snapshots.jsonl"
 
+# Real participation needs real starting capital: a wallet that began the
+# window at/under $1 (the official zero-hour rule) is dust, and its return is
+# meaningless leverage on pocket change (e.g. $0.08 -> $76 reads as +92,000%).
+MIN_ELIGIBLE_USD = 1.0
+
+# Symbols that sit in our broad 148-token allowlist but are NOT part of the
+# competition's eligible, liquid trading universe — a junk/illiquid token here
+# lets a wallet inflate its valuation with an un-sellable bag (e.g. 'H' at
+# ~$0.06 drove a fake $95k / +274,000% "leader"). Dropped from valuation for
+# EVERY wallet so no one can game the board with off-list tokens. Extend as
+# more junk tickers surface.
+INELIGIBLE_SYMBOLS = {"H"}
+
 
 # -- scoring helpers (pure; tested) -------------------------------------------
 def return_pct(current_usd: float, baseline_usd: float | None) -> float | None:
@@ -74,6 +87,11 @@ class Standing:
     ret_pct: float | None
     sub_dollar: bool
     is_us: bool
+    baseline_usd: float | None = None
+    # A real, rule-abiding participant: started the window with real capital
+    # (baseline > $1) and still holds eligible value above $1. False for dust,
+    # un-funded shells, and wallets rugged to nothing.
+    eligible: bool = False
 
 
 class LeaderboardMonitor:
@@ -113,7 +131,7 @@ class LeaderboardMonitor:
         self.registry.ensure_id_map(self.cmc, list(self.allowlist))
         self.registry.ensure_addresses(self.cmc, list(self.allowlist))
         return [(s, self.registry.addresses[s]) for s in self.allowlist
-                if s in self.registry.addresses]
+                if s in self.registry.addresses and s not in INELIGIBLE_SYMBOLS]
 
     def _decimals(self, tokens: list[tuple[str, str]]) -> dict[str, int]:
         cached = self.state["decimals"]
@@ -177,13 +195,20 @@ class LeaderboardMonitor:
                 self.state["baselines"].setdefault(w, {"ts": now.isoformat(), "usd": usd})
             self._save()
 
-        board = sorted(
-            (Standing(
+        def _standing(w: str, usd: float) -> Standing:
+            base = (self.state["baselines"].get(w) or {}).get("usd")
+            return Standing(
                 wallet=w, usd=usd,
-                ret_pct=return_pct(usd, (self.state["baselines"].get(w) or {}).get("usd")),
+                ret_pct=return_pct(usd, base),
                 sub_dollar=usd <= 1.0,
                 is_us=w == self.our_wallet,
-            ) for w, usd in values.items()),
+                baseline_usd=base,
+                eligible=(base is not None and base > MIN_ELIGIBLE_USD
+                          and usd > MIN_ELIGIBLE_USD),
+            )
+
+        board = sorted(
+            (_standing(w, usd) for w, usd in values.items()),
             key=lambda s: (s.ret_pct is None, -(s.ret_pct or 0), -s.usd),
         )
 

@@ -360,7 +360,12 @@ class Agent:
 
         # 1. On-chain truth first.
         portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
-        if self.store.baseline_usd is None and portfolio.total_usd > 0:
+        # Freeze the return baseline only on the first LIVE cycle: a dry-run /
+        # canary cycle must never seed it, or its tiny pre-funding value (e.g.
+        # the ~$47 wallet during testing) sticks and inflates the reported
+        # return for the whole competition.
+        if (self.store.baseline_usd is None and portfolio.total_usd > 0
+                and not self.cfg.dry_run):
             self.store.set_baseline(portfolio.total_usd)
 
         # 2. Snapshot + drawdown ladder (measured like the judge measures it).

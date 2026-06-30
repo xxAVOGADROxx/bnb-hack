@@ -6,7 +6,14 @@ strategy:
   # Active signal plugin (agent/strategies/registry.py). "trend" is the default
   # and the validated one; "mean_reversion" is experimental (backtest first).
   # Override at runtime with --strategy NAME.
-  active: trend
+  # 2026-06-26: "navaja" — momentum/breakout as a 10% high-variance LOTTERY sleeve
+  # (max_position_pct:10 + max_concurrent:1 below = <=10% ever at risk, 90% stays
+  # in stables). DELIBERATELY -EV per this session's backtests (no asymmetric
+  # upside in the eligible liquid universe right now); deployed by explicit user
+  # decision as a bounded-loss bet on a final-days move. Worst case ~-10% = the
+  # ladder's alert level, far from DQ. Revert to `trend` (or mean_reversion) after
+  # the window (ends Jun 28). Prior bet was mean_reversion (best in recent chop).
+  active: momentum
 
 drawdown:                  # measured from high-water mark, hourly snapshots
   alert_pct: 10.0          # notify human
@@ -14,8 +21,13 @@ drawdown:                  # measured from high-water mark, hourly snapshots
   hard_stop_pct: 20.0      # flatten to stables (official DQ cap is ~30%)
 
 position:
-  max_position_pct: 25.0   # max single position, % of portfolio value
-  max_concurrent: 3
+  # 2026-06-26: cut 25 -> 10 to BOUND THE NAVAJA (momentum lottery sleeve) to
+  # <=10% of the book. With max_concurrent:1 below, at most one <=10% position is
+  # ever open, so a full wipeout is ~-10% of portfolio (ladder alert, not DQ) and
+  # 90%+ always sits in stables. Restore to 25 when reverting active off momentum.
+  max_position_pct: 10.0   # max single position, % of portfolio value
+  # 2026-06-26: 2 -> 1 so the navaja holds ONE position at a time (single bullet).
+  max_concurrent: 1
   # Volatility-targeted sizing (#2, risk parity): scale a position DOWN when the
   # token's avg daily range exceeds the target, so each risks a similar budget.
   # Backtest: cuts max drawdown ~37% with equal/better return. 0 disables.
@@ -41,7 +53,10 @@ limits:
   # Re-entry cooldown (#9): after closing a token, no re-entry for this many
   # hours. Kills the same-day whipsaw that pays double friction. Backtest:
   # +0.5pp return, win 29%->36%, in both windows tested. 0 disables.
-  reentry_cooldown_h: 24
+  # 2026-06-26: 24 -> 6 for the navaja — a 24h lockout would allow ~1 entry per
+  # token across the whole remaining window; 6h lets momentum re-engage while
+  # still killing same-cycle whipsaw. Restore to 24 when reverting off momentum.
+  reentry_cooldown_h: 6
   # Per-token edge floor (#9): an entry's expected edge must also clear the
   # token's own MEASURED round-trip friction (data/liquidity_report.json)
   # plus this margin — cheap tokens trade at 2%, expensive ones need more.

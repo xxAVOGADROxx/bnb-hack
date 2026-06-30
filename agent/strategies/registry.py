@@ -6,13 +6,19 @@ Adding a strategy is one line in `_BUILDERS`. Selection is by name (from
 from __future__ import annotations
 
 from agent.strategies.base import Strategy
+from agent.strategies.bounce import BounceStrategy
 from agent.strategies.mean_reversion import MeanReversionStrategy
+from agent.strategies.momentum import MomentumStrategy
+from agent.strategies.reclaim import ReclaimStrategy
 from agent.strategies.trend import TrendStrategy
 
 # name -> zero-arg builder. Defaults are baked into each strategy's constructor.
 _BUILDERS: dict[str, type] = {
     TrendStrategy.name: TrendStrategy,
     MeanReversionStrategy.name: MeanReversionStrategy,
+    BounceStrategy.name: BounceStrategy,
+    ReclaimStrategy.name: ReclaimStrategy,
+    MomentumStrategy.name: MomentumStrategy,
 }
 
 DEFAULT = TrendStrategy.name
