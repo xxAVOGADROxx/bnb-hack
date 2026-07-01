@@ -26,11 +26,14 @@ log = logging.getLogger(__name__)
 
 REPORTS_DIR = DATA_DIR / "reports"
 DECISIONS_PATH = DATA_DIR / "decisions.jsonl"
+LIQUIDITY_REPORT = DATA_DIR / "liquidity_report.json"
 
-# Estimated TWAK swap-fee rates (% per swap leg). Waiver is the competition-week
-# rate; standard is the counterfactual used to show what the waiver saved. TWAK
-# doesn't return the exact on-chain fee, so this is an estimate on notional.
-SWAP_FEE_WAIVER_PCT = 0.077
+# Fallback per-leg swap fee (%) when no live measurement is available. The
+# announced competition-week waiver (0.077%/leg) never applied to our routes:
+# every measured round-trip stayed at ~1.3-1.8% with price_impact 0 (pure fee),
+# i.e. the full ~0.7%/leg standard rate, and the waiver detector never fired.
+# So we do NOT assume the waiver — we estimate the fee ACTUALLY paid from the
+# measured round-trip cost, falling back to this standard rate.
 SWAP_FEE_STANDARD_PCT = 0.7
 
 
@@ -104,20 +107,37 @@ def build_digest(since: datetime, now: datetime | None = None,
     }
 
 
+def _measured_leg_pct() -> float:
+    """Per-leg swap fee (%) inferred from the live liquidity measurement. The
+    report's round-trips carry price_impact 0 (pure fee, no slippage), so the
+    per-leg fee is half the mean round-trip cost. Falls back to the standard
+    rate if the report is missing or unreadable."""
+    try:
+        results = json.loads(LIQUIDITY_REPORT.read_text()).get("results", [])
+        costs = [r["round_trip_cost_pct"] for r in results
+                 if isinstance(r.get("round_trip_cost_pct"), (int, float))]
+        if costs:
+            return (sum(costs) / len(costs)) / 2
+    except (OSError, json.JSONDecodeError, KeyError):
+        pass
+    return SWAP_FEE_STANDARD_PCT
+
+
 def _fee_summary(trades: list[dict]) -> dict:
     """Estimated swap-fee cost for the REAL (non-dry-run) swaps in the period,
-    and what the competition-week waiver saved vs the standard 0.7%/leg rate.
-    Estimate: fee = rate x notional per leg (TWAK returns no exact fee)."""
+    computed from the MEASURED round-trip friction (price_impact 0 = pure fee).
+    The announced 0.077%/leg waiver never applied to our routes, so we do NOT
+    assume it — we report what was actually paid at the measured rate.
+    Estimate: fee = measured_leg_pct x notional per leg (TWAK returns no exact
+    fee)."""
     real = [t for t in trades if not t.get("dry_run")]
     notional = sum(float(t.get("usd") or 0.0) for t in real)
-    at_waiver = notional * SWAP_FEE_WAIVER_PCT / 100
-    at_standard = notional * SWAP_FEE_STANDARD_PCT / 100
+    leg_pct = _measured_leg_pct()
     return {
         "swaps": len(real),
         "notional_usd": round(notional, 2),
-        "fee_waiver_usd": round(at_waiver, 4),
-        "fee_standard_usd": round(at_standard, 4),
-        "waiver_saved_usd": round(at_standard - at_waiver, 4),
+        "fee_pct_per_leg": round(leg_pct, 3),
+        "fee_usd": round(notional * leg_pct / 100, 4),
     }
 
 
@@ -175,8 +195,8 @@ def summary_line(digest: dict, board: list | None = None,
     f = digest.get("fees") or {}
     if f.get("swaps"):
         parts.append(
-            f"💸 swap fees ~${f['fee_waiver_usd']:.2f} (waiver) | "
-            f"saved ~${f['waiver_saved_usd']:.2f} vs standard")
+            f"💸 swap fees ~${f['fee_usd']:.2f} "
+            f"(~{f['fee_pct_per_leg']:.2f}%/leg measured, no waiver)")
     if portfolio:
         parts.append(f"💰 ${portfolio.get('total_usd', 0):.2f}")
     if board is not None:
