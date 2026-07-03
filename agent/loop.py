@@ -88,12 +88,14 @@ class Agent:
         log.info("strategy: %s (available: %s)",
                  self.strategy.name, ", ".join(strategy_registry.available()))
         self.macro = MacroCalendar()
-        # Liquidity sentinel (#7) read pool depth from the CMC DEX API, removed
-        # with the CMC key. The live universe is large-cap (LP-rug risk ~0) and
-        # the stop-loss + price-signal exits still cover fast drops, so it is
-        # disabled until reimplemented on-chain (getReserves) rather than kept
-        # on a dead feed. FOLLOW-UP: on-chain reserves-based sentinel.
-        self.sentinel = None
+        # Liquidity sentinel (#7): pool-drain / rug exit, now read DIRECTLY
+        # on-chain (PancakeSwap v2 getReserves via agent/chain.py) instead of
+        # the removed CMC DEX API. Self-contained — no key, no price feed.
+        self.sentinel = LiquiditySentinel(
+            self.store,
+            min_ref_usd=cfg.risk.liquidity_min_ref_usd,
+            exit_drop_pct=cfg.risk.liquidity_exit_drop_pct,
+        ) if cfg.risk.liquidity_exit_drop_pct > 0 else None
         # Per-token edge floor (#9): an entry must clear the token's own
         # MEASURED round-trip friction + margin, not just the global min.
         self.edge_floors: dict[str, float] = {}
