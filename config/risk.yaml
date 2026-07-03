@@ -72,7 +72,11 @@ entry:
   vol_confirm_lookback: 24   # bars of trailing volume_24h to average against
 
 compliance:
-  daily_trade_deadline_utc: "20:00"  # force a minimal eligible trade if none yet that UTC day
+  # Competition is over: the >=1 trade/UTC-day qualification rule no longer
+  # applies, so we no longer force a stable<->stable swap (it only paid friction
+  # for zero edge). Empty deadline = forced daily trade DISABLED. Restore a
+  # "HH:MM" value to re-enable.
+  daily_trade_deadline_utc: ""       # was "20:00" — forced daily trade off post-competition
   min_portfolio_usd: 5.0             # stay far above the $1 zero-hour rule
 
 data:

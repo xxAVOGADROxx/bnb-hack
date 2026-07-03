@@ -7,6 +7,12 @@ services:
     stop_grace_period: 90s
     env_file: .env
     environment:
+      # Execution backend: route quote/swap DIRECTLY through PancakeSwap V3
+      # instead of TWAK's 0x/LiquidMesh aggregation. Verified on-chain +
+      # $2 self-test 2026-07-02: round-trip drops from ~1.7% (aggregator markup)
+      # to ~0.02-0.9% (LP fee only). Balances/compete/x402 still go via TWAK.
+      # Unset to revert to TWAK. See agent/execution/pancake.py.
+      EXEC_BACKEND: "pancake"
       # Trading-week pre-step: re-measure round-trip friction at the live
       # fee-waiver pricing before the loop starts (see deploy/entrypoint.sh).
       # FILTER_SIZE_USD is ONLY the notional used to MEASURE round-trip cost at
@@ -52,8 +58,8 @@ services:
     # All times UTC; reports land in data/reports/ + Telegram every 12h.
     # Before the window: trade DRY-RUN by commenting this command out.
     command: ["--live",
-              "--start-at", "2026-06-22T00:00Z",
-              "--stop-at",  "2026-06-28T23:59Z",
+              "--start-at", "2026-07-02T00:00Z",
+              "--stop-at",  "2026-07-09T01:00Z",
               "--report-every-min", "720"]
     logging:
       driver: json-file

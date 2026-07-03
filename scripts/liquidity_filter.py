@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -44,12 +45,27 @@ def parse_amount(s: str) -> float:
     return float(m.group(1))
 
 
-def measure(twak: TwakClient, symbol: str, size_usd: float, token_ref: str) -> dict:
-    """token_ref: BSC contract address when known (twak's symbol resolver on
-    BSC only covers a handful of tokens), else the symbol."""
-    leg1 = twak.quote("USDT", token_ref, usd=size_usd, slippage_pct=1.0).raw
+def build_client():
+    """Measure friction with the SAME backend that executes swaps: PancakeSwap
+    V3 direct when EXEC_BACKEND=pancake, else TWAK. Keeps the edge floors honest
+    — an entry is gated against the cost it will actually pay, not a phantom."""
+    if os.environ.get("EXEC_BACKEND", "").lower() == "pancake":
+        from agent.execution.pancake import make_pancake_client
+        from agent.tokens import TokenRegistry
+        twak = TwakClient(chain="bsc", dry_run=True)  # delegate target (unused here)
+        return make_pancake_client(twak, TokenRegistry(), chain="bsc", dry_run=True), "pancake"
+    return TwakClient(chain="bsc", dry_run=True), "twak"
+
+
+def measure(client, backend: str, symbol: str, size_usd: float, token_ref: str) -> dict:
+    """token_ref: BSC contract address when known (the symbol resolver on BSC
+    only covers a handful of tokens), else the symbol."""
+    if backend == "pancake":
+        return {"symbol": symbol, "size_usd": size_usd,
+                **client.measure_round_trip(token_ref, size_usd)}
+    leg1 = client.quote("USDT", token_ref, usd=size_usd, slippage_pct=1.0).raw
     token_amount = parse_amount(leg1["output"])
-    leg2 = twak.quote_amount(token_amount, token_ref, "USDT")
+    leg2 = client.quote_amount(token_amount, token_ref, "USDT")
     usd_back = parse_amount(leg2["output"])
     cost_pct = (1 - usd_back / size_usd) * 100
     return {
@@ -71,7 +87,8 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config(dry_run=True)  # loads .env (TWAK_WALLET_PASSWORD)
-    twak = TwakClient(chain="bsc", dry_run=True)
+    client, backend = build_client()
+    print(f"friction backend: {backend}")
 
     candidates = (
         [s.strip() for s in args.symbols.split(",")] if args.symbols else DEFAULT_CANDIDATES
@@ -86,7 +103,7 @@ def main() -> None:
     results, failures = [], []
     for sym in candidates:
         try:
-            r = measure(twak, sym, args.size_usd, addresses.get(sym) or sym)
+            r = measure(client, backend, sym, args.size_usd, addresses.get(sym) or sym)
             results.append(r)
             print(f"{sym:<8} round-trip {r['round_trip_cost_pct']:>6.2f}%  "
                   f"(${r['usd_back']:.2f} back of ${args.size_usd:.0f})")

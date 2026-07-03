@@ -17,7 +17,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from agent.alerts import Alerter
-from agent.cmc.client import CMCClient, CMCError, usd_quote
+from agent.cmc.client import CMCError, usd_quote
+from agent.market.feed import MarketFeed
 from agent.config import DATA_DIR, AppConfig
 from agent.execution.executor import Executor
 from agent.logger import DecisionLog
@@ -55,22 +56,44 @@ class Agent:
         # (with tiny test capital, every entry dies at the $10 floor instead).
         # Drawdown, snapshots and exits always use the real on-chain value.
         self.paper_equity = paper_equity if cfg.dry_run else 0.0
-        self.cmc = CMCClient(cfg.cmc_api_key)
+        self.registry = TokenRegistry()
+        # Market data (signals + regime) now comes from FREE keyless public
+        # endpoints (Binance klines, alternative.me F&G, CoinGecko dominance)
+        # instead of the paid CMC key that expired 2026-07-03 and, valuing the
+        # whole book at $0, tripped a false HARD STOP. Holdings VALUATION is not
+        # done here — it is on-chain via self._pricer (see below).
+        self.cmc = MarketFeed(self.registry)
         self.twak = make_twak_client(chain=cfg.chain, dry_run=cfg.dry_run)
         self.store = StateStore()
         self.decisions = DecisionLog()
         self.risk = RiskEngine(cfg.risk, cfg.tokens)
         self.alerter = Alerter(cfg.telegram_bot_token, cfg.telegram_chat_id)
-        self.registry = TokenRegistry()
+        # Optional execution backend: route quote/swap DIRECTLY through
+        # PancakeSwap V3 instead of TWAK's 0x/LiquidMesh aggregation. Measured
+        # round-trip drops from ~1.7% (pure aggregator markup) to ~0.1-0.9% (LP
+        # fee only) — the difference between the momentum edge surviving friction
+        # or not. Balances/compete/x402 still delegate to TWAK. Off by default;
+        # EXEC_BACKEND=pancake opts in (reversible: unset it to revert to TWAK).
+        if os.environ.get("EXEC_BACKEND", "").lower() == "pancake":
+            from agent.execution.pancake import make_pancake_client
+            self.twak = make_pancake_client(
+                self.twak, self.registry, chain=cfg.chain, dry_run=cfg.dry_run)
+            log.info("execution backend: PancakeSwap V3 direct (quote/swap)")
+        # Valuation source: on-chain via the execution client when it can price
+        # (PancakeSwap). Keeps the mark equal to realizable value and immune to
+        # any off-chain feed outage. None -> reconcile falls back to CMC-shaped
+        # quotes (self.cmc), used by scripts/dry-run without a pancake backend.
+        self._pricer = self.twak if hasattr(self.twak, "price_usd") else None
         self.strategy = strategy_registry.build(cfg.strategy)  # active signal plugin
         log.info("strategy: %s (available: %s)",
                  self.strategy.name, ", ".join(strategy_registry.available()))
         self.macro = MacroCalendar()
-        self.sentinel = LiquiditySentinel(
-            self.cmc, self.store,
-            min_ref_usd=cfg.risk.liquidity_min_ref_usd,
-            exit_drop_pct=cfg.risk.liquidity_exit_drop_pct,
-        ) if cfg.risk.liquidity_exit_drop_pct > 0 else None
+        # Liquidity sentinel (#7) read pool depth from the CMC DEX API, removed
+        # with the CMC key. The live universe is large-cap (LP-rug risk ~0) and
+        # the stop-loss + price-signal exits still cover fast drops, so it is
+        # disabled until reimplemented on-chain (getReserves) rather than kept
+        # on a dead feed. FOLLOW-UP: on-chain reserves-based sentinel.
+        self.sentinel = None
         # Per-token edge floor (#9): an entry must clear the token's own
         # MEASURED round-trip friction + margin, not just the global min.
         self.edge_floors: dict[str, float] = {}
@@ -284,7 +307,7 @@ class Agent:
                 log.warning("leaderboard refresh failed: %s", e)
             portfolio = None
             try:
-                p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+                p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
                 portfolio = {"total_usd": round(p.total_usd, 2),
                              "holdings": {k: round(v, 2) for k, v in p.usd_values.items()}}
             except Exception as e:  # noqa: BLE001
@@ -303,7 +326,7 @@ class Agent:
         stables) or any emergency de-risk. Honors dry-run."""
         self.registry.ensure_id_map(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
         self.registry.ensure_addresses(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
-        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         non_stable = {s: v for s, v in portfolio.usd_values.items()
                       if s not in self.cfg.tokens.stables and s != "BNB" and v > 1.0}
         if not non_stable:
@@ -312,7 +335,7 @@ class Agent:
             return
         log.info("flatten: closing %s", ", ".join(f"{s} ${v:.2f}" for s, v in non_stable.items()))
         self._flatten_to_stables(portfolio, RiskState.NORMAL)
-        final = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+        final = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         self.alerter.notify(f"🏁 flattened to stables — final ${final.total_usd:.2f}")
 
     def canary_roundtrip(self, token: str = "CAKE", usd: float = 10.0) -> None:
@@ -327,7 +350,7 @@ class Agent:
         self.alerter.notify(f"🐤 canary: real round-trip {stable}->{token}->{stable} ${usd:.0f} (live path test)")
 
         def snapshot():
-            p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+            p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
             st = self.risk.drawdown_state(p.total_usd, p.total_usd)
             return p, st
 
@@ -359,7 +382,7 @@ class Agent:
         now = datetime.now(timezone.utc)
 
         # 1. On-chain truth first.
-        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry)
+        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         # Freeze the return baseline only on the first LIVE cycle: a dry-run /
         # canary cycle must never seed it, or its tiny pre-funding value (e.g.
         # the ~$47 wallet during testing) sticks and inflates the reported
@@ -367,6 +390,23 @@ class Agent:
         if (self.store.baseline_usd is None and portfolio.total_usd > 0
                 and not self.cfg.dry_run):
             self.store.set_baseline(portfolio.total_usd)
+
+        # 1b. Valuation sanity (2026-07-03): a dead price feed once valued the
+        # whole book at $0 and tripped a false HARD STOP. A real wipeout is
+        # impossible while any balance is held and priced, so treat an
+        # implausible collapse as a data glitch — skip the risk ladder and the
+        # snapshot this cycle, never flatten. Next good read resumes normally.
+        hwm = self.store.high_water_mark_usd
+        held = any(a > 0 for a in portfolio.holdings.values())
+        if held and hwm > 0 and portfolio.total_usd < 0.10 * hwm:
+            log.warning(
+                "valuation implausibly low ($%.2f vs HWM $%.2f) with non-zero "
+                "balances — skipping risk ladder this cycle (data glitch?)",
+                portfolio.total_usd, hwm)
+            self.decisions.append(
+                "valuation_glitch", total_usd=round(portfolio.total_usd, 2),
+                hwm=round(hwm, 2))
+            return
 
         # 2. Snapshot + drawdown ladder (measured like the judge measures it).
         metrics = maybe_snapshot(self.store, portfolio.total_usd, now)
@@ -656,7 +696,12 @@ class Agent:
 
     def _ensure_daily_trade(self, now: datetime, portfolio, state: RiskState) -> None:
         """>=1 trade per UTC day is a qualification constraint, not alpha:
-        if nothing traded by the deadline, do a minimal stable<->stable swap."""
+        if nothing traded by the deadline, do a minimal stable<->stable swap.
+        Post-competition this rule no longer applies — an empty
+        daily_trade_deadline_utc disables the forced trade entirely (no reason
+        to pay friction on a swap that captures no edge)."""
+        if not self.cfg.risk.daily_trade_deadline_utc:
+            return
         if self.store.trades_today(now, self.cfg.dry_run) > 0:
             return
         hh, mm = map(int, self.cfg.risk.daily_trade_deadline_utc.split(":"))

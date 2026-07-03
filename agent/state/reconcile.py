@@ -33,16 +33,20 @@ class Portfolio:
     total_usd: float
 
     def open_positions(self, stables: tuple[str, ...]) -> int:
-        """Non-stable holdings above dust count as open positions."""
+        """Non-stable holdings above dust count as open positions. BNB is the
+        native gas reserve, never a traded position — excluding it matches the
+        holdings filter in loop.py and stops the gas balance from permanently
+        pinning max_concurrent (which froze all entries pre-2026-07-02)."""
         return sum(
             1 for sym, usd in self.usd_values.items()
-            if sym not in stables and usd > 1.0
+            if sym not in stables and sym != "BNB" and usd > 1.0
         )
 
 
 def reconcile(
     twak: AnyTwak, cmc: CMCClient, tokens: TokensConfig,
     registry: TokenRegistry | None = None, rpc: Rpc | None = None,
+    pricer=None,
 ) -> Portfolio:
     try:
         raw = twak.balances()
@@ -74,10 +78,42 @@ def reconcile(
                 raise TwakError(f"on-chain balance read failed and no fallback: {e}") from e
             log.warning("on-chain balance read failed (%s); using transport balances", e)
 
-    usd_values = _value_holdings(holdings, cmc)
+    if pricer is not None:
+        usd_values = _value_onchain(holdings, pricer, live=not twak.dry_run)
+    else:
+        usd_values = _value_holdings(holdings, cmc)
     total = sum(usd_values.values())
     log.info("reconciled %d holdings, total $%.2f", len(holdings), total)
     return Portfolio(holdings=holdings, usd_values=usd_values, total_usd=total)
+
+
+def _value_onchain(holdings: dict[str, float], pricer, live: bool) -> dict[str, float]:
+    """Value holdings via the execution venue itself (PancakeSwap spot). Only
+    non-zero balances are quoted (one RPC route each). A pricing miss values
+    that token at $0 but is logged — and if EVERY held token fails to price in
+    live mode we raise rather than report a phantom $0 book (which once tripped
+    a false hard-stop): the caller skips the cycle instead of flattening."""
+    values: dict[str, float] = {}
+    failed: list[str] = []
+    for sym, amount in holdings.items():
+        if amount <= 0:
+            values[sym] = 0.0
+            continue
+        try:
+            price = pricer.price_usd(sym)
+        except Exception as e:  # noqa: BLE001 — one bad quote must not blind the rest
+            log.warning("on-chain price failed for %s: %s", sym, e)
+            price = None
+        if price is None:
+            failed.append(sym)
+            values[sym] = 0.0
+        else:
+            values[sym] = amount * price
+    if live and failed and all(v == 0.0 for v in values.values()):
+        raise TwakError(f"on-chain valuation failed for all holdings: {failed}")
+    if failed:
+        log.warning("no on-chain price for %s — valued at $0", failed)
+    return values
 
 
 def _value_holdings(holdings: dict[str, float], cmc: CMCClient) -> dict[str, float]:

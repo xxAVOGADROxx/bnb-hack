@@ -11,7 +11,9 @@ dependencies = [
     "PyYAML>=6.0",
     "python-dotenv>=1.0",
     "pandas>=2.0",
-    "pycryptodome>=3.20",  # keccak256 for deterministic CREATE2 pool derivation
+    "pycryptodome>=3.20",  # keccak256 for CREATE2 pool derivation + keystore AES-GCM
+    "web3>=6",             # direct PancakeSwap V3 execution (agent/execution/pancake.py)
+    "eth-account>=0.13",   # local HD signing of PancakeSwap swaps
 ]
 
 [project.urls]

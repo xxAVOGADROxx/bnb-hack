@@ -128,9 +128,10 @@ def load_config(dry_run: bool = True) -> AppConfig:
         stables=tuple(t.get("stables") or ()),
     )
 
+    # CMC is no longer required: signals/regime come from free public feeds
+    # (agent/market/feed.py) and valuation is on-chain. Key kept as optional
+    # legacy config (scripts/backtests may still use a CMC client directly).
     cmc_key = os.environ.get("CMC_PRO_API_KEY", "")
-    if not cmc_key and not dry_run:
-        raise RuntimeError("CMC_PRO_API_KEY missing from .env (required for live mode)")
 
     return AppConfig(
         cmc_api_key=cmc_key,
