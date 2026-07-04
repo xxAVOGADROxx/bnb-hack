@@ -53,6 +53,11 @@ class RiskConfig:
     # ratios overshoot. ratio<=0 disables.
     vol_confirm_ratio: float = 1.0
     vol_confirm_lookback: int = 24
+    # Trade-budget reserve (#12): before this UTC hour ("HH:MM"), keep this
+    # many of the daily trades unspent so overnight whipsaws can't starve the
+    # afternoon. "" or 0 disables. Exits are exempt (de-risking always runs).
+    reserve_trades_until_utc: str = ""
+    reserved_trades: int = 0
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,9 @@ def load_config(dry_run: bool = True) -> AppConfig:
         edge_floor_margin_pct=float(r["limits"].get("edge_floor_margin_pct", 0.0)),
         vol_confirm_ratio=float((r.get("entry") or {}).get("vol_confirm_ratio", 1.0)),
         vol_confirm_lookback=int((r.get("entry") or {}).get("vol_confirm_lookback", 24)),
+        reserve_trades_until_utc=str(
+            r["limits"].get("reserve_trades_until_utc") or ""),
+        reserved_trades=int(r["limits"].get("reserved_trades", 0)),
     )
     # The real watchlist is private: config/watchlist.local.yaml (gitignored)
     # overrides the empty placeholder committed to the public repo.

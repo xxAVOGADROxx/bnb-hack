@@ -30,6 +30,7 @@ from agent.risk.macro import MacroCalendar
 from agent.signals import regime as regime_mod
 from agent.signals import technical
 from agent.state.reconcile import reconcile
+from agent.state import roundtrips
 from agent.strategies import registry as strategy_registry
 from agent.strategies.base import MarketContext
 from agent.state.store import StateStore
@@ -533,6 +534,12 @@ class Agent:
                         signal_age_min=0.0,
                     )
                     if r is not None:
+                        roundtrips.record(
+                            "close", token, stop_px,
+                            portfolio.usd_values.get(token, 0.0),
+                            f"stop-loss {loss:.1f}%",
+                            tx_hash=r.get("hash") or r.get("txHash"),
+                            dry_run=bool(r.get("dry_run")))
                         self._position_closed(token)
                     continue
                 # Liquidity sentinel (#7): the pool draining is the one tail
@@ -555,10 +562,22 @@ class Agent:
                             signal_age_min=0.0,
                         )
                         if r is not None:
+                            roundtrips.record(
+                                "close", token, price,
+                                portfolio.usd_values.get(token, 0.0),
+                                f"liquidity drain {verdict.drop_pct:.0f}%",
+                                tx_hash=r.get("hash") or r.get("txHash"),
+                                dry_run=bool(r.get("dry_run")))
                             self._position_closed(token)
                         continue
             elif self.store.entry_price(token) is not None:
-                self._position_closed(token)  # position left without us seeing the exit
+                # Position left without us seeing the exit (manual move, missed
+                # cycle): close the ledger leg too so pairs don't dangle.
+                roundtrips.record(
+                    "close", token, price, 0.0,
+                    "position closed outside agent (reconciled)",
+                    dry_run=self.cfg.dry_run)
+                self._position_closed(token)
 
             sig = self.strategy.evaluate(
                 MarketContext(token, closes, volumes, holding))
@@ -654,6 +673,10 @@ class Agent:
                 signal_age_min=age_min,
             )
             if r is not None:  # track cost basis (stop-loss) + pool baseline (#7)
+                roundtrips.record(
+                    "open" if is_entry else "close", token, price, usd,
+                    sig.reason, tx_hash=r.get("hash") or r.get("txHash"),
+                    dry_run=bool(r.get("dry_run")))
                 if is_entry:
                     self.store.record_entry(token, price)
                     if self.sentinel and addr:

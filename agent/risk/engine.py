@@ -7,6 +7,7 @@ logged by the caller to the decision log.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, time, timezone
 from enum import Enum
 
 from agent.config import RiskConfig, TokensConfig
@@ -71,6 +72,7 @@ class RiskEngine:
         open_positions: int,
         trades_today: int,
         signal_age_min: float,
+        now: datetime | None = None,
     ) -> Verdict:
         # Allowlist is absolute: only the 149 eligible tokens, fail-closed.
         if not self.tokens.allowlist:
@@ -92,6 +94,25 @@ class RiskEngine:
             return Verdict(False, "stale_data", f"signal {signal_age_min:.1f} min old")
         if trades_today >= self.risk.max_trades_per_day:
             return Verdict(False, "daily_trade_cap", f"{trades_today} trades already today")
+        # Trade-budget reserve (#12): before the cutoff hour, keep the last N
+        # trades of the daily budget unspent, so overnight signals can't starve
+        # the afternoon (2026-07-04: cap burned by 01:00 UTC, afternoon BUYs
+        # rejected for hours). Exits never reach here — de-risking is exempt.
+        if (now is not None and self.risk.reserved_trades > 0
+                and self.risk.reserve_trades_until_utc):
+            try:
+                hh, mm = self.risk.reserve_trades_until_utc.split(":")
+                cutoff = time(int(hh), int(mm))
+            except ValueError:
+                cutoff = None  # unparseable config: reserve disabled, cap still holds
+            if (cutoff is not None
+                    and now.astimezone(timezone.utc).time() < cutoff
+                    and trades_today >= self.risk.max_trades_per_day - self.risk.reserved_trades):
+                return Verdict(
+                    False, "trade_budget_reserve",
+                    f"{trades_today} trades used; {self.risk.reserved_trades} reserved "
+                    f"until {self.risk.reserve_trades_until_utc} UTC",
+                )
         if open_positions >= self.risk.max_concurrent:
             return Verdict(False, "max_concurrent", f"{open_positions} positions open")
         max_usd = portfolio_usd * self.risk.max_position_pct / 100

@@ -67,6 +67,7 @@ class Executor:
             open_positions=open_positions,
             trades_today=self.store.trades_today(now, getattr(self.twak, "dry_run", False)),
             signal_age_min=signal_age_min,
+            now=now,
         )
         base = {
             "from": proposal.from_token,
