@@ -44,6 +44,13 @@ class MomentumStrategy:
         min_conviction: float = 0.30,
         breakout_ref_pct: float = 2.0,  # breakout size that scores full conviction
         min_edge_pct: float = 3.0,      # claim a daily-range continuation (clears the gate)
+        # Exit hysteresis — best combo from scripts/exit_hysteresis_bt.py
+        # (2026-07-04): cuts net loss ~35% across 240h/720h x 1%/2% cost, no
+        # extra stop-outs. The marginal trigger was the MACD leg: one falling
+        # hist bar on a down tick round-tripped entries in minutes.
+        exit_ema_buffer_pct: float = 1.0,  # EMA break must exceed this margin
+        exit_confirm_bars: int = 2,        # consecutive bars below the EMA required
+        macd_confirm_bars: int = 2,        # consecutive falling-hist bars required
     ):
         self.lookback = lookback
         self.ema_fast = ema_fast
@@ -55,6 +62,9 @@ class MomentumStrategy:
         self.min_conviction = min_conviction
         self.breakout_ref_pct = breakout_ref_pct
         self.min_edge_pct = min_edge_pct
+        self.exit_ema_buffer_pct = exit_ema_buffer_pct
+        self.exit_confirm_bars = max(1, exit_confirm_bars)
+        self.macd_confirm_bars = max(1, macd_confirm_bars)
 
     def evaluate(self, ctx: MarketContext) -> Signal:
         closes = ctx.closes
@@ -64,7 +74,8 @@ class MomentumStrategy:
         s = pd.Series(list(closes), dtype=float)
         price = float(s.iloc[-1])
         prev = float(s.iloc[-2])
-        fast = float(ema(s, self.ema_fast).iloc[-1])
+        fast_series = ema(s, self.ema_fast)
+        fast = float(fast_series.iloc[-1])
         r = float(rsi(s, 14).iloc[-1])
         line, sig = macd(s, self.macd_fast, self.macd_slow, self.macd_signal)
         hist = line - sig
@@ -76,9 +87,20 @@ class MomentumStrategy:
 
         # Exit: let it run while it holds the fast EMA; sell when momentum breaks
         # back below it, or MACD rolls over on a down bar. The 8% stop backstops a
-        # gap-down between cycles.
+        # gap-down between cycles. Hysteresis (backtested 2026-07-04): the break
+        # must clear a margin below the EMA and/or persist for N bars, so a
+        # 0.3% wiggle minutes after entry doesn't round-trip us into friction.
         if ctx.holding:
-            if price < fast or (hist_now < hist_prev and price < prev):
+            ema_break = all(
+                float(s.iloc[-k]) < float(fast_series.iloc[-k])
+                * (1 - self.exit_ema_buffer_pct / 100)
+                for k in range(1, self.exit_confirm_bars + 1)
+            )
+            macd_break = price < prev and all(
+                float(hist.iloc[-k]) < float(hist.iloc[-k - 1])
+                for k in range(1, self.macd_confirm_bars + 1)
+            )
+            if ema_break or macd_break:
                 return Signal(ctx.token, Action.SELL, 1.0, False, 0.0,
                               f"momentum break: rsi {r:.0f}, {breakout_pct:+.1f}% vs {self.lookback}h high")
             return Signal(ctx.token, Action.HOLD, 0.0, False, 0.0,
