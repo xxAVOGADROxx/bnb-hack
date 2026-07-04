@@ -92,13 +92,18 @@ class RiskEngine:
             return Verdict(False, "drawdown_pause", "entries paused by drawdown ladder")
         if signal_age_min > self.risk.max_signal_age_min:
             return Verdict(False, "stale_data", f"signal {signal_age_min:.1f} min old")
-        if trades_today >= self.risk.max_trades_per_day:
+        # Daily cap: <= 0 disables it entirely (2026-07-04 user decision —
+        # churn stays bounded by max_concurrent, the re-entry cooldown, volume
+        # confirm and per-token edge floors).
+        if (self.risk.max_trades_per_day > 0
+                and trades_today >= self.risk.max_trades_per_day):
             return Verdict(False, "daily_trade_cap", f"{trades_today} trades already today")
         # Trade-budget reserve (#12): before the cutoff hour, keep the last N
         # trades of the daily budget unspent, so overnight signals can't starve
         # the afternoon (2026-07-04: cap burned by 01:00 UTC, afternoon BUYs
         # rejected for hours). Exits never reach here — de-risking is exempt.
-        if (now is not None and self.risk.reserved_trades > 0
+        if (now is not None and self.risk.max_trades_per_day > 0
+                and self.risk.reserved_trades > 0
                 and self.risk.reserve_trades_until_utc):
             try:
                 hh, mm = self.risk.reserve_trades_until_utc.split(":")

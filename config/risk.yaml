@@ -47,7 +47,11 @@ exits:
   liquidity_min_ref_usd: 100000
 
 limits:
-  max_trades_per_day: 4    # anti-overtrading: friction eats returns
+  # 2026-07-04 (user decision): daily cap REMOVED — 0 disables. Overtrading
+  # stays bounded by max_concurrent:1, the re-entry cooldown, volume confirm
+  # and per-token edge floors; each round trip risks ~0.05-0.1% of the book
+  # in friction. Restore a positive value to re-enable.
+  max_trades_per_day: 0
   max_slippage_pct: 1.0    # quote above this -> do not trade
   min_expected_edge_pct: 2.0  # entries must clear the cost floor with margin
   # Re-entry cooldown (#9): after closing a token, no re-entry for this many
@@ -62,12 +66,11 @@ limits:
   # plus this margin — cheap tokens trade at 2%, expensive ones need more.
   # Backtest: +0.3pp / -13% maxDD on top of the cooldown. 0 disables.
   edge_floor_margin_pct: 0.5
-  # Trade-budget reserve (#12, 2026-07-04): before this UTC hour, keep this
-  # many of the daily trades unspent — overnight whipsaws burned the whole cap
-  # by 01:00 UTC and afternoon breakout signals were rejected for hours.
-  # Sells are exempt from the cap entirely. "" or 0 disables.
-  reserve_trades_until_utc: "12:00"
-  reserved_trades: 2
+  # Trade-budget reserve (#12): before this UTC hour, keep this many of the
+  # daily trades unspent (only meaningful with a positive cap above). Moot
+  # while the cap is disabled. "" or 0 disables.
+  reserve_trades_until_utc: ""
+  reserved_trades: 0
 
 entry:
   # Volume confirmation (#11): an entry needs volume_24h >= ratio x its own
