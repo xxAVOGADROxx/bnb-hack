@@ -16,8 +16,8 @@ the wallet at $0. See agent/state/reconcile.py.
 
 Callers key everything by CMC integer id (already threaded through loop.py);
 we reverse that to a symbol via the persisted data/id_map.json and query the
-matching Binance USDT pair. Failures raise CMCError so loop.py's existing
-`except CMCError` freshness gates apply unchanged (no data -> no new entries).
+matching Binance USDT pair. Failures raise FeedError: loop.py's freshness
+gates catch it (no data -> no new entries).
 """
 from __future__ import annotations
 
@@ -28,9 +28,31 @@ from typing import Any
 
 import requests
 
-from agent.cmc.client import CMCError  # reused: loop.py catches this type
-
 log = logging.getLogger(__name__)
+
+
+class FeedError(RuntimeError):
+    """A market-data read failed. Loop treats it as a freshness gate."""
+
+
+# Legacy alias: agent/cmc/client.py (old backtest scripts) re-exports this
+# same class, so `except CMCError` and `except FeedError` are equivalent.
+CMCError = FeedError
+
+
+def usd_quote(coin: dict) -> dict:
+    """Extract the USD quote dict from a CMC-shaped coin object, tolerating
+    shape drift ("quote" sometimes arrives as a single-element list). The free
+    feed emits the same shape, so downstream parsing is unchanged."""
+    q = coin.get("quote")
+    if isinstance(q, list):
+        q = q[0] if q else {}
+    if not isinstance(q, dict):
+        return {}
+    usd = q.get("USD", q)
+    if isinstance(usd, list):
+        usd = usd[0] if usd else {}
+    return usd if isinstance(usd, dict) else {}
 
 # data-api.binance.vision is the public market-data mirror: keyless and, unlike
 # api.binance.com, not geo-restricted on cloud hosts. Fall through to the main
@@ -72,13 +94,13 @@ class MarketFeed:
         try:
             r = self.session.get(url, params=params, timeout=self.timeout)
         except requests.RequestException as e:
-            raise CMCError(f"{url} -> request failed: {e}") from e
+            raise FeedError(f"{url} -> request failed: {e}") from e
         if r.status_code != 200:
-            raise CMCError(f"{url} -> {r.status_code}: {r.text[:200]}")
+            raise FeedError(f"{url} -> {r.status_code}: {r.text[:200]}")
         try:
             data = r.json()
         except ValueError as e:
-            raise CMCError(f"{url} -> non-JSON response: {e}") from e
+            raise FeedError(f"{url} -> non-JSON response: {e}") from e
         if ttl_s:
             self._cache[key] = (time.monotonic(), data)
         return data
@@ -89,15 +111,15 @@ class MarketFeed:
         for host in BINANCE_HOSTS:
             try:
                 return self._get(f"{host}{path}", params, ttl_s=ttl_s)
-            except CMCError as e:
+            except FeedError as e:
                 last = e
                 continue
-        raise CMCError(f"binance {path} unreachable on all hosts: {last}")
+        raise FeedError(f"binance {path} unreachable on all hosts: {last}")
 
     def _symbol(self, cmc_id) -> str:
         sym = self._id_to_symbol.get(int(cmc_id))
         if not sym:
-            raise CMCError(f"no symbol for CMC id {cmc_id!r} in id_map")
+            raise FeedError(f"no symbol for CMC id {cmc_id!r} in id_map")
         return SYMBOL_OVERRIDES.get(sym, sym)
 
     def _pair(self, cmc_id) -> str:
@@ -119,7 +141,7 @@ class MarketFeed:
             ttl_s=ttl_s,
         )
         if not isinstance(raw, list) or not raw:
-            raise CMCError(f"no klines for {pair}")
+            raise FeedError(f"no klines for {pair}")
         # kline row: [openTime, open, high, low, close, vol, closeTime, quoteVol, ...]
         ts = [datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).isoformat() for k in raw]
         closes = [float(k[4]) for k in raw]
@@ -139,7 +161,7 @@ class MarketFeed:
         for cid in ids:
             try:
                 pairs[int(cid)] = self._pair(cid)
-            except CMCError:
+            except FeedError:
                 continue
         if not pairs:
             return {}
@@ -162,7 +184,7 @@ class MarketFeed:
             dom = ((data or {}).get("data", {}) or {}).get(
                 "market_cap_percentage", {}).get("btc")
             return {"btc_dominance": float(dom) if dom is not None else None}
-        except CMCError as e:
+        except FeedError as e:
             # Non-fatal: regime.classify treats a missing dominance as
             # fail-cautious (CONFLICTED), same as it did on a CMC hiccup.
             log.warning("btc dominance unavailable (%s)", e)
@@ -172,23 +194,5 @@ class MarketFeed:
         data = self._get(FNG_URL, {"limit": 1}, ttl_s=ttl_s)
         arr = (data or {}).get("data") or []
         if not arr:
-            raise CMCError("fear&greed: empty response")
+            raise FeedError("fear&greed: empty response")
         return {"value": float(arr[0]["value"])}
-
-    # -- bootstrap stubs (id_map / addresses are pre-persisted on disk) -----
-    def id_map(self, symbols):
-        raise CMCError(
-            "symbol->id resolution needs CMC; data/id_map.json must be "
-            "pre-populated (it is for the current universe)")
-
-    def _get_info(self, *a, **k):
-        raise CMCError(
-            "token metadata needs CMC; data/bsc_addresses.json must be "
-            "pre-populated (it is for the current universe)")
-
-    def plan_summary(self) -> dict:
-        return {
-            "tier": "free (binance + alternative.me + coingecko)",
-            "credits_monthly": None, "credits_left": None,
-            "credits_daily": None, "rate_limit_min": None, "is_paid": False,
-        }

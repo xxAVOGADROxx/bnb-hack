@@ -6,8 +6,9 @@ Multicall3) for the tradable universe, which is authoritative and
 transport-independent; TWAK only supplies the wallet address and the native
 BNB balance. (TWAK's REST get_token_holdings relies on the Trust Wallet
 indexer, which is empty for an un-indexed wallet — direct balanceOf avoids
-that dependency entirely.) USD valuation comes from CMC quotes via the
-symbol -> CMC id map in data/id_map.json.
+that dependency entirely.) USD valuation is on-chain via the execution
+client's pricer; the fallback (no pricer, e.g. dry-run without the Pancake
+backend) is the free feed's Binance-ticker quotes keyed by the id map.
 """
 from __future__ import annotations
 
@@ -16,8 +17,8 @@ import logging
 from dataclasses import dataclass
 
 from agent.chain import Rpc
-from agent.cmc.client import CMCClient, CMCError, usd_quote
 from agent.config import DATA_DIR, TokensConfig
+from agent.market.feed import FeedError, MarketFeed, usd_quote
 from agent.tokens import TokenRegistry
 from agent.twak.client import AnyTwak, TwakError
 
@@ -44,7 +45,7 @@ class Portfolio:
 
 
 def reconcile(
-    twak: AnyTwak, cmc: CMCClient, tokens: TokensConfig,
+    twak: AnyTwak, feed: MarketFeed, tokens: TokensConfig,
     registry: TokenRegistry | None = None, rpc: Rpc | None = None,
     pricer=None,
 ) -> Portfolio:
@@ -81,7 +82,7 @@ def reconcile(
     if pricer is not None:
         usd_values = _value_onchain(holdings, pricer, live=not twak.dry_run)
     else:
-        usd_values = _value_holdings(holdings, cmc)
+        usd_values = _value_holdings(holdings, feed)
     total = sum(usd_values.values())
     log.info("reconciled %d holdings, total $%.2f", len(holdings), total)
     return Portfolio(holdings=holdings, usd_values=usd_values, total_usd=total)
@@ -116,7 +117,7 @@ def _value_onchain(holdings: dict[str, float], pricer, live: bool) -> dict[str, 
     return values
 
 
-def _value_holdings(holdings: dict[str, float], cmc: CMCClient) -> dict[str, float]:
+def _value_holdings(holdings: dict[str, float], feed: MarketFeed) -> dict[str, float]:
     if not holdings:
         return {}
     id_map: dict = {}
@@ -124,19 +125,19 @@ def _value_holdings(holdings: dict[str, float], cmc: CMCClient) -> dict[str, flo
         id_map = json.loads(ID_MAP_PATH.read_text())
     ids = {sym: id_map[sym]["id"] for sym in holdings if sym in id_map}
     # Native BNB is gas, never traded (allowlist gates trading) — but it IS
-    # capital, and the judge measures the wallet's total value. Value it, or
-    # the drawdown ladder and the return % drift from the judged number.
+    # capital: value it, or the drawdown ladder and the return % drift from
+    # the wallet's real worth. 1839 is BNB's id-map key (feed -> BNBUSDT).
     for sym, cid in {"BNB": 1839}.items():
         if sym in holdings and sym not in ids:
             ids[sym] = cid
     unmapped = [sym for sym in holdings if sym not in ids]
     if unmapped:
-        log.warning("no CMC id for %s — valued at $0", unmapped)
+        log.warning("no id-map entry for %s — valued at $0", unmapped)
     if not ids:
         return {sym: 0.0 for sym in holdings}
     try:
-        quotes = cmc.quotes_latest(list(ids.values()))
-    except CMCError as e:
+        quotes = feed.quotes_latest(list(ids.values()))
+    except FeedError as e:
         log.warning("valuation unavailable (%s); valuing at $0 this cycle", e)
         return {sym: 0.0 for sym in holdings}
     values = {}

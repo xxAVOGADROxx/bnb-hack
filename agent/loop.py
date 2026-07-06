@@ -17,8 +17,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from agent.alerts import Alerter
-from agent.cmc.client import CMCError, usd_quote
-from agent.market.feed import MarketFeed
+from agent.market.dex import DexFeed
+from agent.market.feed import FeedError, MarketFeed, usd_quote
 from agent.config import DATA_DIR, AppConfig
 from agent.execution.executor import Executor
 from agent.logger import DecisionLog
@@ -36,7 +36,6 @@ from agent.strategies.base import MarketContext
 from agent.state.store import StateStore
 from agent.tokens import TokenRegistry
 from agent.twak.client import make_twak_client
-from agent.x402 import premium as x402
 
 log = logging.getLogger(__name__)
 
@@ -63,39 +62,45 @@ class Agent:
         # instead of the paid CMC key that expired 2026-07-03 and, valuing the
         # whole book at $0, tripped a false HARD STOP. Holdings VALUATION is not
         # done here — it is on-chain via self._pricer (see below).
-        self.cmc = MarketFeed(self.registry)
+        self.feed = MarketFeed(self.registry)
         self.twak = make_twak_client(chain=cfg.chain, dry_run=cfg.dry_run)
         self.store = StateStore()
         self.decisions = DecisionLog()
         self.risk = RiskEngine(cfg.risk, cfg.tokens)
         self.alerter = Alerter(cfg.telegram_bot_token, cfg.telegram_chat_id)
-        # Optional execution backend: route quote/swap DIRECTLY through
-        # PancakeSwap V3 instead of TWAK's 0x/LiquidMesh aggregation. Measured
-        # round-trip drops from ~1.7% (pure aggregator markup) to ~0.1-0.9% (LP
-        # fee only) — the difference between the momentum edge surviving friction
-        # or not. Balances/compete/x402 still delegate to TWAK. Off by default;
-        # EXEC_BACKEND=pancake opts in (reversible: unset it to revert to TWAK).
-        if os.environ.get("EXEC_BACKEND", "").lower() == "pancake":
+        # Execution backend: quote/swap DIRECTLY through PancakeSwap V3 instead
+        # of TWAK's 0x/LiquidMesh aggregation. Measured round-trip drops from
+        # ~1.7% (pure aggregator markup) to ~0.1-0.9% (LP fee only) — the
+        # difference between the momentum edge surviving friction or not.
+        # Balances and native-BNB legs still delegate to TWAK. DEFAULT since
+        # 2026-07-05 (it has been the live path all along); EXEC_BACKEND=twak
+        # opts back out to the aggregator.
+        if os.environ.get("EXEC_BACKEND", "pancake").lower() == "pancake":
             from agent.execution.pancake import make_pancake_client
             self.twak = make_pancake_client(
                 self.twak, self.registry, chain=cfg.chain, dry_run=cfg.dry_run)
             log.info("execution backend: PancakeSwap V3 direct (quote/swap)")
         # Valuation source: on-chain via the execution client when it can price
         # (PancakeSwap). Keeps the mark equal to realizable value and immune to
-        # any off-chain feed outage. None -> reconcile falls back to CMC-shaped
-        # quotes (self.cmc), used by scripts/dry-run without a pancake backend.
+        # any off-chain feed outage. None -> reconcile falls back to the free
+        # feed's quotes (self.feed), used by scripts/dry-run without a pancake backend.
         self._pricer = self.twak if hasattr(self.twak, "price_usd") else None
         self.strategy = strategy_registry.build(cfg.strategy)  # active signal plugin
         log.info("strategy: %s (available: %s)",
                  self.strategy.name, ", ".join(strategy_registry.available()))
         self.macro = MacroCalendar()
-        # Liquidity sentinel (#7): pool-drain / rug exit, now read DIRECTLY
-        # on-chain (PancakeSwap v2 getReserves via agent/chain.py) instead of
-        # the removed CMC DEX API. Self-contained — no key, no price feed.
+        # On-chain venue eyes (F1): aggregated PancakeSwap pool depth + order
+        # flow from free keyless APIs (DexScreener). Feeds the sentinel and
+        # the shadow "dex_flow" decision records; strictly fail-open.
+        self.dex = DexFeed()
+        # Liquidity sentinel (#7): pool-drain / rug exit. Depth = aggregated
+        # PancakeSwap V2+V3 liquidity (self.dex), falling back to the direct
+        # on-chain v2 getReserves read (agent/chain.py) if the API is down.
         self.sentinel = LiquiditySentinel(
             self.store,
             min_ref_usd=cfg.risk.liquidity_min_ref_usd,
             exit_drop_pct=cfg.risk.liquidity_exit_drop_pct,
+            dex=self.dex,
         ) if cfg.risk.liquidity_exit_drop_pct > 0 else None
         # Per-token edge floor (#9): an entry must clear the token's own
         # MEASURED round-trip friction + margin, not just the global min.
@@ -188,26 +193,12 @@ class Agent:
             report_every_min: float = 0.0) -> None:
         mode = "LIVE" if not self.cfg.dry_run else "dry-run"
         log.info("agent starting (%s, chain=%s)", mode, self.cfg.chain)
-        # Bootstrap the symbol->id->address caches if a fresh clone has none
-        # (data/ is gitignored; these are public, regenerable reference data).
+        # Sanity-check the persisted symbol->id->address maps up front (they
+        # are hand-maintained post-CMC; a missing entry means that token can't
+        # signal or trade, so shout at boot rather than every cycle).
         universe = [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables]
-        self.registry.ensure_id_map(self.cmc, universe)
-        # Contract addresses are mandatory for execution — resolve up front.
-        self.registry.ensure_addresses(self.cmc, universe)
-
-        # On-the-record proof of the CMC tier the agent had at boot (the Pro
-        # upgrade is time-boxed; this lands the actual entitlement in the audit
-        # trail). Never blocks startup — a key/info hiccup is logged and ignored.
-        try:
-            ks = self.cmc.plan_summary()
-            log.info("CMC key: %s | monthly credits %s (left %s), daily %s, %s/min",
-                     ks["tier"], ks["credits_monthly"], ks["credits_left"],
-                     ks["credits_daily"], ks["rate_limit_min"])
-            if not ks["is_paid"]:
-                log.info("CMC tier is free/Basic — premium history disabled, "
-                         "agent runs on standard endpoints (degrades safely)")
-        except Exception as e:  # noqa: BLE001 — diagnostics must never gate trading
-            log.warning("CMC key/info check skipped: %s", e)
+        self.registry.ensure_id_map(self.feed, universe)
+        self.registry.ensure_addresses(self.feed, universe)
 
         # Scheduled window (exact UTC): sleep until start_at, stop at stop_at.
         # Everything in UTC — no local-timezone arithmetic, ever.
@@ -292,7 +283,7 @@ class Agent:
         if self._lb is None:
             from agent.monitor.leaderboard import LeaderboardMonitor
             self._lb = LeaderboardMonitor(
-                self.cmc, self.registry, self.cfg.tokens.allowlist,
+                self.feed, self.registry, self.cfg.tokens.allowlist,
                 our_wallet=os.environ.get("AGENT_WALLET_ADDRESS", ""))
         return self._lb
 
@@ -310,7 +301,7 @@ class Agent:
                 log.warning("leaderboard refresh failed: %s", e)
             portfolio = None
             try:
-                p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
+                p = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
                 portfolio = {"total_usd": round(p.total_usd, 2),
                              "holdings": {k: round(v, 2) for k, v in p.usd_values.items()}}
             except Exception as e:  # noqa: BLE001
@@ -327,9 +318,9 @@ class Agent:
         """One-shot: close every non-stable position into USDT and exit.
         For the end of the competition window (lock the measured result in
         stables) or any emergency de-risk. Honors dry-run."""
-        self.registry.ensure_id_map(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
-        self.registry.ensure_addresses(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
-        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
+        self.registry.ensure_id_map(self.feed, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        self.registry.ensure_addresses(self.feed, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        portfolio = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         non_stable = {s: v for s, v in portfolio.usd_values.items()
                       if s not in self.cfg.tokens.stables and s != "BNB" and v > 1.0}
         if not non_stable:
@@ -338,7 +329,7 @@ class Agent:
             return
         log.info("flatten: closing %s", ", ".join(f"{s} ${v:.2f}" for s, v in non_stable.items()))
         self._flatten_to_stables(portfolio, RiskState.NORMAL)
-        final = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
+        final = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         self.alerter.notify(f"🏁 flattened to stables — final ${final.total_usd:.2f}")
 
     def canary_roundtrip(self, token: str = "CAKE", usd: float = 10.0) -> None:
@@ -347,13 +338,13 @@ class Agent:
         same token so it ends flat. Bypasses the regime gate (TEST ONLY) but
         keeps every other guardrail; fully logged + alerted. Tiny by design —
         friction (~1.4% of $10 ≈ $0.15) is the cost of the validation."""
-        self.registry.ensure_id_map(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
-        self.registry.ensure_addresses(self.cmc, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        self.registry.ensure_id_map(self.feed, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
+        self.registry.ensure_addresses(self.feed, [*self.cfg.tokens.watchlist, *self.cfg.tokens.stables])
         stable = self.cfg.tokens.stables[0]
         self.alerter.notify(f"🐤 canary: real round-trip {stable}->{token}->{stable} ${usd:.0f} (live path test)")
 
         def snapshot():
-            p = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
+            p = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
             st = self.risk.drawdown_state(p.total_usd, p.total_usd)
             return p, st
 
@@ -385,7 +376,7 @@ class Agent:
         now = datetime.now(timezone.utc)
 
         # 1. On-chain truth first.
-        portfolio = reconcile(self.twak, self.cmc, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
+        portfolio = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
         # Freeze the return baseline only on the first LIVE cycle: a dry-run /
         # canary cycle must never seed it, or its tiny pre-funding value (e.g.
         # the ~$47 wallet during testing) sticks and inflates the reported
@@ -428,11 +419,11 @@ class Agent:
         signal_ts = datetime.now(timezone.utc)
         try:
             view = regime_mod.classify(
-                self.cmc.global_metrics(ttl_s=self.cfg.risk.regime_cache_min * 60),
-                self.cmc.fear_greed_latest(ttl_s=self.cfg.risk.regime_cache_min * 60),
+                self.feed.global_metrics(ttl_s=self.cfg.risk.regime_cache_min * 60),
+                self.feed.fear_greed_latest(ttl_s=self.cfg.risk.regime_cache_min * 60),
                 fear_conviction_floor=self.cfg.risk.fear_conviction_floor,
             )
-        except CMCError as e:
+        except FeedError as e:
             # Freshness gate: no data -> no new entries this cycle.
             log.warning("regime data unavailable: %s", e)
             self.decisions.append("data_gate", detail=str(e))
@@ -485,16 +476,23 @@ class Agent:
         stable = self.cfg.tokens.stables[0]
         # paper_equity is 0 outside dry-run: live always sizes on-chain truth.
         equity = max(portfolio.total_usd, self.paper_equity)
+        # Entries opened WITHIN this cycle: `portfolio` is the reconcile from
+        # the cycle start, so without this counter two BUY signals in the same
+        # pass would each see the pre-entry position count and max_concurrent
+        # could be breached (it happened live 2026-07-05 23:10 UTC: ETH and
+        # LTC entered 9s apart against max_concurrent=1 — the old 4/day cap
+        # had been masking the race).
+        opened_this_cycle = 0
         for token in self.cfg.tokens.watchlist:
             cmc_id = self.registry.cmc_id(token)
             if cmc_id is None:
                 log.warning("no CMC id for %s — skipping", token)
                 continue
             try:
-                series = self.cmc.series_with_volume(cmc_id, interval="1h", count=200)
+                series = self.feed.series_with_volume(cmc_id, interval="1h", count=200)
                 closes = [p for _, p, _ in series]
                 volumes = [v for _, _, v in series]
-            except CMCError as e:
+            except FeedError as e:
                 log.warning("no series for %s (%s) — skipping", token, e)
                 continue
             holding = portfolio.usd_values.get(token, 0.0) > 1.0
@@ -511,11 +509,11 @@ class Agent:
                 stop_px = price
                 try:
                     live = usd_quote(
-                        self.cmc.quotes_latest([cmc_id], ttl_s=60).get(cmc_id) or {}
+                        self.feed.quotes_latest([cmc_id], ttl_s=60).get(cmc_id) or {}
                     ).get("price")
                     if live:
                         stop_px = float(live)
-                except CMCError:
+                except FeedError:
                     pass  # degrade to the hourly close
                 entry_px = self.store.entry_price(token)
                 if entry_px is None:
@@ -587,24 +585,29 @@ class Agent:
                 conviction=round(sig.conviction, 2), grey_zone=sig.grey_zone,
                 expected_move_pct=round(sig.expected_move_pct, 2), detail=sig.reason,
             )
+            # Venue shadow read (F1): on a BUY signal, record what PancakeSwap
+            # itself is doing — aggregated liquidity, 1h taker buy/sell counts
+            # and the pool-vs-CEX price basis. CALIBRATION ONLY: not a gate
+            # until a backtest earns it one (house rule).
+            if sig.action == technical.Action.BUY and not holding and addr:
+                pv = self.dex.pool_view(token, addr)
+                if pv is not None:
+                    basis = ((pv.price_usd / price - 1) * 100
+                             if pv.price_usd and price else None)
+                    self.decisions.append(
+                        "dex_flow", token=token,
+                        liq_usd=round(pv.liquidity_usd),
+                        buys_h1=pv.buys_h1, sells_h1=pv.sells_h1,
+                        flow_ratio=round(pv.flow_ratio, 2),
+                        vol_h24_usd=round(pv.vol_h24_usd),
+                        basis_pct=round(basis, 3) if basis is not None else None,
+                        main_pool=pv.main_pool, label=pv.main_pool_label,
+                    )
 
-            premium_entry = False
             if sig.action == technical.Action.HOLD:
-                # x402 tie-break: in the grey zone (3/4 conditions) under a
-                # CONFLICTED regime, pay for one premium TA pull and enter
-                # only on a clear bullish confirmation. Don't pay when the
-                # answer couldn't be used anyway (already holding, entries
-                # blocked by macro blackout / RISK_OFF: scale == 0, or the
-                # regime conviction floor would reject the entry regardless).
-                if (sig.grey_zone and view.regime == regime_mod.Regime.CONFLICTED
-                        and scale > 0 and not holding
-                        and sig.conviction >= view.entry_conviction_floor):
-                    premium_entry = x402.tie_break(self.twak, self.decisions, token, cmc_id)
-                if not premium_entry:
-                    continue
-                log.info("%s grey zone: premium confirmed -> entry at half conviction", token)
+                continue
 
-            is_entry = sig.action == technical.Action.BUY or premium_entry
+            is_entry = sig.action == technical.Action.BUY
             if is_entry and (holding or scale == 0.0):
                 continue
             # Asymmetric regime gate (#4): under extreme fear only top-
@@ -669,7 +672,8 @@ class Agent:
                 proposal,
                 portfolio_usd=equity,  # == real total outside dry-run
                 state=state,
-                open_positions=portfolio.open_positions(self.cfg.tokens.stables),
+                open_positions=(portfolio.open_positions(self.cfg.tokens.stables)
+                                + opened_this_cycle),
                 signal_age_min=age_min,
             )
             if r is not None:  # track cost basis (stop-loss) + pool baseline (#7)
@@ -678,6 +682,7 @@ class Agent:
                     sig.reason, tx_hash=r.get("hash") or r.get("txHash"),
                     dry_run=bool(r.get("dry_run")))
                 if is_entry:
+                    opened_this_cycle += 1
                     self.store.record_entry(token, price)
                     if self.sentinel and addr:
                         self.sentinel.on_entry(token, addr)

@@ -3,7 +3,7 @@
 Replicates the official scoring approximately, for the whole field:
   participants  <- Registered(address) events on the competition contract
   holdings      <- balanceOf() of every eligible BSC token, via Multicall3
-  prices        <- one batched CMC quotes call (same credits we already pay)
+  prices        <- one batched free-feed quotes call (Binance ticker)
   return %      <- vs each wallet's baseline at the first snapshot of the
                    trading window, recomputed per refresh (sub-$1 flagged)
 
@@ -30,7 +30,7 @@ from agent.chain import (  # shared on-chain primitives (also re-exported for te
     MULTICALL3, SEL_BALANCE_OF, SEL_DECIMALS, Rpc,
     decode_aggregate3, encode_aggregate3,
 )
-from agent.cmc.client import CMCClient, CMCError, usd_quote
+from agent.market.feed import FeedError, MarketFeed, usd_quote
 from agent.config import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -95,9 +95,9 @@ class Standing:
 
 
 class LeaderboardMonitor:
-    def __init__(self, cmc: CMCClient, registry, allowlist: tuple[str, ...],
+    def __init__(self, feed: MarketFeed, registry, allowlist: tuple[str, ...],
                  our_wallet: str = "", rpc: Rpc | None = None):
-        self.cmc = cmc
+        self.feed = feed
         self.registry = registry
         self.allowlist = allowlist
         self.our_wallet = our_wallet.lower()
@@ -128,8 +128,8 @@ class LeaderboardMonitor:
     def _universe(self) -> list[tuple[str, str]]:
         # Self-bootstrap on a fresh clone: id map first (the agent only builds
         # ids for its watchlist; the board values the whole allowlist).
-        self.registry.ensure_id_map(self.cmc, list(self.allowlist))
-        self.registry.ensure_addresses(self.cmc, list(self.allowlist))
+        self.registry.ensure_id_map(self.feed, list(self.allowlist))
+        self.registry.ensure_addresses(self.feed, list(self.allowlist))
         return [(s, self.registry.addresses[s]) for s in self.allowlist
                 if s in self.registry.addresses and s not in INELIGIBLE_SYMBOLS]
 
@@ -148,7 +148,7 @@ class LeaderboardMonitor:
     def _prices(self, symbols: list[str]) -> dict[str, float]:
         ids = {s: self.registry.cmc_id(s) for s in symbols}
         id_list = [i for i in ids.values() if i]
-        data = self.cmc.quotes_latest(id_list, ttl_s=120)
+        data = self.feed.quotes_latest(id_list, ttl_s=120)
         prices = {}
         for sym, cid in ids.items():
             entry = data.get(str(cid)) or data.get(cid)
@@ -157,7 +157,7 @@ class LeaderboardMonitor:
             if entry:
                 try:
                     prices[sym] = float(usd_quote(entry)["price"])
-                except (CMCError, KeyError, TypeError, ValueError):
+                except (FeedError, KeyError, TypeError, ValueError):
                     pass
         return prices
 

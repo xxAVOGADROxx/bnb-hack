@@ -6,24 +6,26 @@ By the time price prints the damage, the exit fills against an empty book.
 This watches the *pool liquidity* of each held token and cuts the position
 when it drops hard below the entry-time baseline.
 
-Reads pool depth DIRECTLY on-chain — PancakeSwap v2 pair `getReserves()` via
-the shared RPC pool (agent/chain.py), no third-party DEX API (this replaced a
-dependency on the CMC DEX API, removed 2026-07-03). Reference pools are the
-token's USDT and WBNB v2 pairs, whose addresses are CREATE2-deterministic
-(factory + keccak256, verified against the canonical CAKE/WBNB pool). A pool's
-USD value is 2x its quote-side reserve — a constant-product pool holds equal
-value on each side. BNB is priced on-chain from the canonical WBNB/USDT pool
-reserves. A token whose deepest v2 pool is below `min_ref_usd` is *uncovered*
-(e.g. ZEC/BCH route through other venues): logged once, then left alone.
+Depth source (2026-07-05): AGGREGATED PancakeSwap liquidity across ALL the
+token's pools (V2 + V3) via the free DexScreener API (agent/market/dex.py) —
+the V2-only getReserves read underneath missed liquidity that migrated to V3
+(CAKE's main pool is V3) and left ZEC/BCH "uncovered". Baselines record their
+source ("agg:dexscreener" vs a concrete v2 pair address) and are only ever
+compared against the SAME source, so a deploy or an API outage can't
+manufacture a phantom drain.
 
-Fail-open by design: any RPC error / empty read -> no forced action. This
+Fallback: direct on-chain PancakeSwap v2 `getReserves()` via the shared RPC
+pool (agent/chain.py) — CREATE2-derived USDT/WBNB pairs, pool USD = 2x the
+quote-side reserve, BNB priced from the canonical WBNB/USDT pool. A token
+below `min_ref_usd` in both sources is *uncovered*: logged once, left alone.
+
+Fail-open by design: any API/RPC error / empty read -> no forced action. This
 guards a tail risk; the regular exits still own the common cases.
 
-Caveat (pre-existing, inherited from the CMC-TVL version): a WBNB-quoted pool's
-USD value moves with the BNB price, so a very large BNB drop can read as a
-partial "drain". The 40% default threshold, short momentum holds and
-max_concurrent:1 keep this immaterial; a native-reserve baseline is the
-follow-up if it ever bites.
+Caveat (pre-existing): a WBNB-quoted pool's USD value moves with the BNB
+price, so a very large BNB drop can read as a partial "drain". The 40%
+default threshold, short momentum holds and max_concurrent:1 keep this
+immaterial; a native-reserve baseline is the follow-up if it ever bites.
 """
 from __future__ import annotations
 
@@ -74,13 +76,21 @@ class LiquidityVerdict:
                 f"vs baseline ${self.baseline_usd:,.0f} ({self.drop_pct:+.1f}%)")
 
 
+# Baseline "pool" tag for the aggregated DexScreener depth source. Baselines
+# are compared strictly same-source: an AGG baseline is only re-read via the
+# aggregator, a v2-pair baseline only via getReserves.
+AGG_SOURCE = "agg:dexscreener"
+
+
 class LiquiditySentinel:
     def __init__(self, store: StateStore, min_ref_usd: float = 100_000.0,
-                 exit_drop_pct: float = 40.0, rpc: Rpc | None = None):
+                 exit_drop_pct: float = 40.0, rpc: Rpc | None = None,
+                 dex=None):
         self.store = store
         self.min_ref_usd = min_ref_usd
         self.exit_drop_pct = exit_drop_pct
         self.rpc = rpc or Rpc()
+        self.dex = dex  # agent.market.dex.DexFeed | None (None -> v2-only)
 
     # -- on-chain reads ----------------------------------------------------
     def _reserves(self, pair: str) -> tuple[int, int] | None:
@@ -159,7 +169,26 @@ class LiquiditySentinel:
 
     # -- lifecycle ---------------------------------------------------------
     def on_entry(self, token: str, token_address: str) -> None:
-        """Record the entry-time liquidity baseline (fail-open, never raises)."""
+        """Record the entry-time liquidity baseline (fail-open, never raises).
+        Preferred source: aggregated PancakeSwap depth (V2+V3); if the
+        aggregator is unreachable, fall back to the direct v2 read."""
+        if self.dex is not None:
+            view = None
+            try:
+                view = self.dex.pool_view(token, token_address)
+            except Exception as e:  # noqa: BLE001 — belt and braces: fail open
+                log.debug("dex pool_view raised for %s: %s", token, e)
+            if view is not None and view.liquidity_usd > 0:
+                if view.liquidity_usd < self.min_ref_usd:
+                    log.info(
+                        "%s: aggregated pancake liquidity $%.0f below $%.0f "
+                        "floor — sentinel uncovered",
+                        token, view.liquidity_usd, self.min_ref_usd)
+                    self.store.record_pool_baseline(token, None, view.liquidity_usd)
+                else:
+                    self.store.record_pool_baseline(
+                        token, AGG_SOURCE, view.liquidity_usd)
+                return
         pool, liq = self._deepest_pool(token_address)
         if pool is None:
             log.info("%s: no v2 reference pool >= $%.0f — sentinel uncovered",
@@ -176,7 +205,20 @@ class LiquiditySentinel:
         pool, base_liq = base.get("pool"), float(base.get("liq") or 0.0)
         if not pool or base_liq <= 0:
             return None  # uncovered token
-        liq = self._pool_usd_for(token_address, pool)
+        if pool == AGG_SOURCE:
+            # Same-source comparison only: aggregator baseline needs an
+            # aggregator read (an outage -> fail open, never a phantom drain).
+            if self.dex is None:
+                return None
+            try:
+                view = self.dex.pool_view(token, token_address)
+            except Exception:  # noqa: BLE001
+                return None
+            if view is None or view.liquidity_usd <= 0:
+                return None
+            liq = view.liquidity_usd
+        else:
+            liq = self._pool_usd_for(token_address, pool)
         if liq <= 0:
             return None  # unreadable this cycle -> fail open
         drop = (1 - liq / base_liq) * 100

@@ -2,17 +2,18 @@
 
 twak's symbol resolver on BSC is unreliable (it resolved TON/AVAX/LTC to
 contracts whose quotes diverged wildly from the canonical Binance-Peg
-tokens) — every twak call MUST use the BEP-20 contract address. Addresses
-come from CMC metadata (/v2/cryptocurrency/info) and are persisted in
-data/bsc_addresses.json; ids come from data/id_map.json (built once from
-the allowlist).
+tokens) — every twak call MUST use the BEP-20 contract address. Both maps
+are persisted files (data/id_map.json, data/bsc_addresses.json), originally
+built from CMC metadata; post-CMC (key removed 2026-07-03) they are
+maintained BY HAND: adding a token to the watchlist means adding its id-map
+entry (any unique int works — it is just the feed's internal key) and its
+BEP-20 contract address, then re-running scripts/liquidity_filter.py.
 """
 from __future__ import annotations
 
 import json
 import logging
 
-from agent.cmc.client import CMCClient, CMCError
 from agent.config import DATA_DIR
 
 log = logging.getLogger(__name__)
@@ -39,80 +40,27 @@ class TokenRegistry:
         log.warning("no BSC address for %s — falling back to symbol resolution", symbol)
         return symbol
 
-    def ensure_id_map(self, cmc: CMCClient, symbols: list[str]) -> None:
-        """Build symbol -> CMC id for any missing symbol and persist. Makes a
-        fresh clone (no data/ cache) self-bootstrapping: data/id_map.json is a
-        public, regenerable cache, not a committed file."""
+    def ensure_id_map(self, _feed, symbols: list[str]) -> None:
+        """Post-CMC this no longer fetches anything: it verifies the persisted
+        map covers the universe and shouts (once, at boot) if it doesn't. The
+        `_feed` param is kept so call sites read the same as before."""
         missing = [s for s in symbols if s not in self.id_map]
-        if not missing:
-            return
-        # CMC's /map endpoint accepts only comma-separated ASCII-alphanumeric
-        # symbols and rejects the WHOLE batch on one non-ASCII name (some
-        # eligible tokens are CN-named memecoins, e.g. 币安人生). Drop those
-        # (they can't be symbol-resolved anyway) and chunk the rest so a single
-        # unresolvable symbol can't poison everyone else's lookup.
-        usable = [s for s in missing if s.isascii() and s.isalnum()]
-        if len(usable) < len(missing):
-            log.info("id map: skipping %d non-alphanumeric symbol(s)",
-                     len(missing) - len(usable))
-        rows: list = []
-        for i in range(0, len(usable), 100):
-            chunk = usable[i:i + 100]
-            try:
-                data = cmc.id_map(chunk)
-            except CMCError as e:
-                log.warning("could not build id map for %s: %s", chunk, e)
-                continue
-            rows += data if isinstance(data, list) else (data.get("data") or [])
-        if not rows:
-            return
-        # CMC returns one row per symbol; keep the highest-rank (lowest rank #).
-        for row in rows:
-            sym = row.get("symbol")
-            if not sym or sym not in missing:
-                continue
-            rank = row.get("rank") or row.get("cmc_rank") or 10**9
-            prev = self.id_map.get(sym)
-            if prev is None or rank < (prev.get("rank") or 10**9):
-                self.id_map[sym] = {"id": row["id"], "name": row.get("name"), "rank": rank}
-        ID_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
-        ID_MAP_PATH.write_text(json.dumps(self.id_map, indent=2))
-        log.info("id map built: %d symbols", len(self.id_map))
+        if missing:
+            log.error(
+                "id map missing %s — add entries to %s by hand "
+                "(shape: {\"SYM\": {\"id\": <unique int>, \"name\": ...}})",
+                missing, ID_MAP_PATH)
 
-    def ensure_addresses(self, cmc: CMCClient, symbols: list[str]) -> None:
-        """Fetch and persist BSC contract addresses for any symbol missing one."""
-        missing = [s for s in symbols if s not in self.addresses and s in self.id_map]
-        if not missing:
-            return
-        ids = {s: self.id_map[s]["id"] for s in missing}
-        try:
-            data = cmc._get(
-                "/v2/cryptocurrency/info", {"id": ",".join(map(str, ids.values()))}
-            )
-        except CMCError as e:
-            log.warning("could not fetch contract addresses for %s: %s", missing, e)
-            return
-        for sym, cid in ids.items():
-            entry = data.get(str(cid)) or data.get(cid) or {}
-            if isinstance(entry, list):
-                entry = entry[0] if entry else {}
-            addr = _bsc_address(entry)
-            if addr:
-                self.addresses[sym] = addr
-            else:
-                log.warning("CMC metadata has no BSC contract for %s (id %s)", sym, cid)
-        ADDRESSES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        ADDRESSES_PATH.write_text(json.dumps(self.addresses, indent=2))
-
-
-def _bsc_address(info_entry: dict) -> str | None:
-    for ca in info_entry.get("contract_address", []):
-        plat = ca.get("platform") or {}
-        coin = plat.get("coin") or {}
-        name = (plat.get("name") or "").lower()
-        if "bnb" in name or "bsc" in name or coin.get("symbol") == "BNB":
-            return ca.get("contract_address")
-    return None
+    def ensure_addresses(self, _feed, symbols: list[str]) -> None:
+        """Verify every symbol has a BEP-20 contract address persisted;
+        execution refuses symbol resolution, so a missing address means the
+        token cannot trade until it is added to the file by hand."""
+        missing = [s for s in symbols if s not in self.addresses]
+        if missing:
+            log.error(
+                "BSC addresses missing %s — add the BEP-20 contract addresses "
+                "to %s by hand (verify on bscscan against the canonical "
+                "Binance-Peg contract)", missing, ADDRESSES_PATH)
 
 
 def _read(path) -> dict:

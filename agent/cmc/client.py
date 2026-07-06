@@ -1,6 +1,10 @@
-"""CoinMarketCap Pro REST client.
+"""CoinMarketCap Pro REST client — LEGACY, kept only for the old backtest
+scripts under scripts/ that were written against the paid key (expired
+2026-07-03). Nothing under agent/ imports this at runtime anymore: the live
+loop runs on agent/market/feed.py (free keyless sources) and CMCError /
+usd_quote are canonical there — re-exported here so old imports keep working.
 
-Design rules:
+Design rules (historical):
 - Always query by CMC `id`, never by symbol (symbols collide).
 - Batch ids into single calls (one credit per quotes/latest batch).
 - TTL cache per endpoint so the regime is recomputed every N minutes,
@@ -15,27 +19,11 @@ from typing import Any
 
 import requests
 
+from agent.market.feed import CMCError, usd_quote  # noqa: F401 — re-exports
+
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://pro-api.coinmarketcap.com"
-
-
-class CMCError(RuntimeError):
-    pass
-
-
-def usd_quote(coin: dict) -> dict:
-    """Extract the USD quote dict from a coin object, tolerating the API's
-    shape drift ("quote" sometimes arrives as a single-element list)."""
-    q = coin.get("quote")
-    if isinstance(q, list):
-        q = q[0] if q else {}
-    if not isinstance(q, dict):
-        return {}
-    usd = q.get("USD", q)
-    if isinstance(usd, list):
-        usd = usd[0] if usd else {}
-    return usd if isinstance(usd, dict) else {}
 
 
 class CMCClient:
