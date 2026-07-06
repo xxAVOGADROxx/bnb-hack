@@ -153,6 +153,30 @@ class MarketFeed:
             out.append((ts[i], closes[i], v24))
         return out
 
+    def ohlcv_series(
+        self, id_, interval: str = "1h", count: int = 200, ttl_s: int = 240
+    ) -> list[tuple[str, float, float, float, float]]:
+        """[(iso_ts, high, low, close, volume_24h), ...] oldest first — the
+        true-OHLC companion of series_with_volume (ATR/ADX need highs/lows).
+        Same klines request underneath, so the two share one HTTP cache entry
+        and one rate-limit slot."""
+        pair = self._pair(id_)
+        raw = self._get_binance(
+            "/api/v3/klines",
+            {"symbol": pair, "interval": interval, "limit": min(int(count), 1000)},
+            ttl_s=ttl_s,
+        )
+        if not isinstance(raw, list) or not raw:
+            raise FeedError(f"no klines for {pair}")
+        win = 24 if interval == "1h" else 1
+        qvols = [float(k[7]) for k in raw]
+        out = []
+        for i, k in enumerate(raw):
+            ts = datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).isoformat()
+            v24 = sum(qvols[max(0, i - win + 1): i + 1])
+            out.append((ts, float(k[2]), float(k[3]), float(k[4]), v24))
+        return out
+
     # -- live spot price (stop-loss check only; NOT valuation) -------------
     def quotes_latest(self, ids: list[int], ttl_s: int = 60) -> dict:
         """{cmc_id: {"quote": {"USD": {"price": float}}}} so usd_quote() works

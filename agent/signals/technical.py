@@ -90,6 +90,39 @@ def macd(closes: pd.Series, fast: int, slow: int, signal: int) -> tuple[pd.Serie
     return line, line.ewm(span=signal, adjust=False).mean()
 
 
+def _true_range(highs: pd.Series, lows: pd.Series, closes: pd.Series) -> pd.Series:
+    prev_close = closes.shift(1)
+    return pd.concat(
+        [highs - lows, (highs - prev_close).abs(), (lows - prev_close).abs()],
+        axis=1).max(axis=1)
+
+
+def atr_pct(highs: pd.Series, lows: pd.Series, closes: pd.Series,
+            period: int = 14) -> pd.Series:
+    """Wilder ATR as a % of the close — the token's own true volatility unit
+    (needs real OHLC; avg_daily_range_pct below is the closes-only proxy that
+    predates the free OHLC feed)."""
+    atr = _true_range(highs, lows, closes).ewm(
+        alpha=1 / period, adjust=False).mean()
+    return atr / closes.replace(0, 1e-12) * 100
+
+
+def adx(highs: pd.Series, lows: pd.Series, closes: pd.Series,
+        period: int = 14) -> pd.Series:
+    """Wilder ADX (0..100): trend strength regardless of direction. Classic
+    reading: <20 chop, >25 trending. All Wilder smoothing (alpha=1/period)."""
+    up = highs.diff()
+    down = -lows.diff()
+    plus_dm = pd.Series(0.0, index=highs.index).mask((up > down) & (up > 0), up)
+    minus_dm = pd.Series(0.0, index=highs.index).mask((down > up) & (down > 0), down)
+    w = dict(alpha=1 / period, adjust=False)
+    tr_s = _true_range(highs, lows, closes).ewm(**w).mean().replace(0, 1e-12)
+    plus_di = 100 * plus_dm.ewm(**w).mean() / tr_s
+    minus_di = 100 * minus_dm.ewm(**w).mean() / tr_s
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-12)
+    return dx.ewm(**w).mean()
+
+
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
