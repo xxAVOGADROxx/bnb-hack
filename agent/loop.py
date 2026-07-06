@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from agent.alerts import Alerter
+from agent.market.derivatives import DerivFeed
 from agent.market.dex import DexFeed
 from agent.market.feed import FeedError, MarketFeed, usd_quote
 from agent.config import DATA_DIR, AppConfig
@@ -93,6 +94,10 @@ class Agent:
         # flow from free keyless APIs (DexScreener). Feeds the sentinel and
         # the shadow "dex_flow" decision records; strictly fail-open.
         self.dex = DexFeed()
+        # Perp positioning eyes (F2): OKX funding/OI/liquidations per token,
+        # shadow "deriv_view" records only — the squeeze fingerprint gates
+        # nothing until scripts/squeeze_bt.py earns it a rule. Fail-open.
+        self.derivs = DerivFeed()
         # Liquidity sentinel (#7): pool-drain / rug exit. Depth = aggregated
         # PancakeSwap V2+V3 liquidity (self.dex), falling back to the direct
         # on-chain v2 getReserves read (agent/chain.py) if the API is down.
@@ -602,6 +607,25 @@ class Agent:
                         vol_h24_usd=round(pv.vol_h24_usd),
                         basis_pct=round(basis, 3) if basis is not None else None,
                         main_pool=pv.main_pool, label=pv.main_pool_label,
+                    )
+                # Perp positioning shadow (F2): is this breakout a short
+                # squeeze (OI down + price up = fuel) or fresh longs piling
+                # in? Calibration only, same as dex_flow.
+                dv = self.derivs.snapshot(token)
+                if dv is not None:
+                    px_chg = ((price / closes[-25] - 1) * 100
+                              if len(closes) >= 25 and closes[-25] else None)
+                    self.decisions.append(
+                        "deriv_view", token=token,
+                        funding=dv.funding_rate, oi_usd=dv.oi_usd,
+                        oi_chg_24h_pct=dv.oi_chg_24h_pct,
+                        ls_ratio=dv.ls_ratio,
+                        long_liq_usd=dv.long_liq_usd,
+                        short_liq_usd=dv.short_liq_usd,
+                        liq_window_h=dv.liq_window_h,
+                        px_chg_24h_pct=round(px_chg, 2) if px_chg is not None else None,
+                        squeeze=(dv.squeeze_fingerprint(px_chg)
+                                 if px_chg is not None else None),
                     )
 
             if sig.action == technical.Action.HOLD:
