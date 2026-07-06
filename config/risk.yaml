@@ -6,14 +6,15 @@ strategy:
   # Active signal plugin (agent/strategies/registry.py). "trend" is the default
   # and the validated one; "mean_reversion" is experimental (backtest first).
   # Override at runtime with --strategy NAME.
-  # 2026-06-26: "navaja" — momentum/breakout as a 10% high-variance LOTTERY sleeve
-  # (max_position_pct:10 + max_concurrent:1 below = <=10% ever at risk, 90% stays
-  # in stables). DELIBERATELY -EV per this session's backtests (no asymmetric
-  # upside in the eligible liquid universe right now); deployed by explicit user
-  # decision as a bounded-loss bet on a final-days move. Worst case ~-10% = the
-  # ladder's alert level, far from DQ. Revert to `trend` (or mean_reversion) after
-  # the window (ends Jun 28). Prior bet was mean_reversion (best in recent chop).
-  active: momentum
+  # 2026-07-06: momentum ("navaja") -> trend. The navaja was an explicit
+  # competition-window lottery (bounded-loss bet on a final-days move); the
+  # competition is over and the head-to-head (scripts/trend_vs_momentum_bt.py)
+  # shows trend bleeds 5-6x less after friction (720h/1%: -0.42% vs -1.95%,
+  # 8 vs 56 trades). Sizing/cooldown below stay at the navaja-era values
+  # (10%/1pos/6h) — that is the exact config the head-to-head measured; the
+  # pre-navaja trend values (25%/2pos/24h, see comments below) are a separate
+  # decision if the testbed should size up.
+  active: trend
 
 drawdown:                  # measured from high-water mark, hourly snapshots
   alert_pct: 10.0          # notify human
