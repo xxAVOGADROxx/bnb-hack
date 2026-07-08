@@ -34,6 +34,7 @@ from agent.state.reconcile import reconcile
 from agent.state import roundtrips
 from agent.strategies import registry as strategy_registry
 from agent.strategies.base import MarketContext
+from agent.strategies.shadow import ShadowBooks
 from agent.state.store import StateStore
 from agent.tokens import TokenRegistry
 from agent.twak.client import make_twak_client
@@ -113,6 +114,12 @@ class Agent:
         self._friction_baseline: float | None = None
         if cfg.risk.edge_floor_margin_pct > 0:
             self._friction_baseline = self._load_edge_floors(announce_missing=not cfg.dry_run)
+        # Shadow books: paper-trade EVERY registered plugin on the same cycle
+        # data with the same gates/sizing and measured friction, so all five
+        # strategies grow a live track record while only the active one pays
+        # fees. Calibration only, strictly fail-open (house rule).
+        self.shadow = ShadowBooks(
+            cfg.risk, floors=lambda: self.edge_floors, decisions=self.decisions)
         # Self-correcting friction refresh (trading-week swap-fee waiver capture):
         # every FLOOR_REFRESH_H hours re-measure round-trip cost; on a material
         # drop vs this boot baseline (the waiver going live) exit cleanly so the
@@ -627,6 +634,11 @@ class Agent:
                         squeeze=(dv.squeeze_fingerprint(px_chg)
                                  if px_chg is not None else None),
                     )
+
+            # Shadow books: give every plugin this cycle's data. Runs for
+            # every token regardless of the active signal; fail-open inside.
+            self.shadow.observe(token, closes, volumes, price,
+                                scale, view.entry_conviction_floor)
 
             if sig.action == technical.Action.HOLD:
                 continue
