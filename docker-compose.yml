@@ -50,17 +50,12 @@ services:
       # Private watchlist (gitignored). Writable: the on-start filter pre-step
       # regenerates it from the fresh round-trip measurement.
       - ./config/watchlist.local.yaml:/app/config/watchlist.local.yaml
-    # LIVE, window-gated. Bring up with `docker compose up -d --build` DURING the
-    # competition week. The service form keeps the restart watchdog
-    # (`docker compose run` containers do NOT auto-restart); on a crash-restart
-    # the agent re-reads the window bounds — waits if early, trades if inside,
-    # stops cleanly if past the end — and the entrypoint re-measures friction.
+    # LIVE, open-ended. 2026-07-08: competition window flags REMOVED — the
+    # bot is a post-competition testbed now, so no --start-at/--stop-at; it
+    # runs until `docker compose down` (the restart policy keeps it alive
+    # through crashes, and the entrypoint re-measures friction on each start).
     # All times UTC; reports land in data/reports/ + Telegram every 12h.
-    # Before the window: trade DRY-RUN by commenting this command out.
-    command: ["--live",
-              "--start-at", "2026-07-02T00:00Z",
-              "--stop-at",  "2026-07-09T01:00Z",
-              "--report-every-min", "720"]
+    command: ["--live", "--report-every-min", "720"]
     logging:
       driver: json-file
       options:

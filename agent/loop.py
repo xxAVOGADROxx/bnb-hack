@@ -31,6 +31,7 @@ from agent.risk.macro import MacroCalendar
 from agent.signals import regime as regime_mod
 from agent.signals import technical
 from agent.state.reconcile import reconcile
+from agent.state import housekeep as housekeep_mod
 from agent.state import roundtrips
 from agent.strategies import registry as strategy_registry
 from agent.strategies.base import MarketContext
@@ -135,6 +136,8 @@ class Agent:
         )
         self._stop = False           # set by SIGTERM/SIGINT for a clean shutdown
         self._last_heartbeat_hour = -1
+        self._last_risk_state: RiskState | None = None
+        self._last_housekeep_day: str | None = None
         self._lb = None              # lazy read-only leaderboard monitor
         self._last_report: datetime | None = None
 
@@ -306,11 +309,11 @@ class Agent:
         self._last_report = datetime.now(timezone.utc)
         try:
             digest = digest_mod.build_digest(period_start)
+            # Leaderboard scraping OFF (2026-07-08, post-competition): the
+            # dashboard is frozen and every refresh appended full standings to
+            # leaderboard_snapshots.jsonl (36MB by the end). Restore
+            # `board = self._leaderboard().refresh()` if a new competition starts.
             board = None
-            try:
-                board = self._leaderboard().refresh()
-            except Exception as e:  # noqa: BLE001 — board is best-effort
-                log.warning("leaderboard refresh failed: %s", e)
             portfolio = None
             try:
                 p = reconcile(self.twak, self.feed, self.cfg.tokens, registry=self.registry, pricer=self._pricer)
@@ -417,12 +420,22 @@ class Agent:
         # 2. Snapshot + drawdown ladder (measured like the judge measures it).
         metrics = maybe_snapshot(self.store, portfolio.total_usd, now)
         self._maybe_heartbeat(now, portfolio, metrics)
+        # Once per UTC day: enforce the 7-day retention window on reports and
+        # the append-only JSONL logs so disk usage stays flat (fail-open).
+        day = now.strftime("%Y-%m-%d")
+        if day != self._last_housekeep_day:
+            self._last_housekeep_day = day
+            housekeep_mod.housekeep(now)
         state = self.risk.drawdown_state(portfolio.total_usd, metrics.high_water_mark_usd)
-        if state in (RiskState.ALERT, RiskState.PAUSE_ENTRIES, RiskState.HARD_STOP):
+        # Alert on the TRANSITION only — a lingering drawdown state would
+        # otherwise ping Telegram every 5-min cycle until it recovers.
+        if (state in (RiskState.ALERT, RiskState.PAUSE_ENTRIES, RiskState.HARD_STOP)
+                and state != self._last_risk_state):
             self.alerter.notify(
                 f"risk state {state.value}: drawdown {metrics.drawdown_pct:.1f}%, "
                 f"portfolio ${metrics.portfolio_usd:.2f}"
             )
+        self._last_risk_state = state
         if state == RiskState.HARD_STOP:
             self._flatten_to_stables(portfolio, state)
             return
@@ -464,8 +477,10 @@ class Agent:
             self.alerter.notify(f"portfolio ${portfolio.total_usd:.2f} near $1 floor!")
 
     def _maybe_heartbeat(self, now: datetime, portfolio, metrics) -> None:
-        """Once per UTC hour, push a balance/return line to Telegram so the
-        window can be watched from the phone without reading logs."""
+        """Once per UTC hour, log a balance/return line. 2026-07-08 (user
+        request): log only, no Telegram — the hourly pings were noise. Push
+        alerts are reserved for swaps, start/stop, the scheduled report and
+        safety events; the same numbers live in the 📋 report."""
         if now.hour == self._last_heartbeat_hour:
             return
         self._last_heartbeat_hour = now.hour
@@ -474,9 +489,10 @@ class Agent:
             f"{s} ${v:.0f}" for s, v in sorted(
                 portfolio.usd_values.items(), key=lambda x: -x[1]) if v > 1.0
         ) or "empty"
-        self.alerter.notify(
-            f"💰 ${portfolio.total_usd:.2f} ({ret}) | dd {metrics.drawdown_pct:.1f}% | "
-            f"trades today {self.store.trades_today(now, self.cfg.dry_run)}\n{held}"
+        log.info(
+            "heartbeat: $%.2f (%s) | dd %.1f%% | trades today %s | %s",
+            portfolio.total_usd, ret, metrics.drawdown_pct,
+            self.store.trades_today(now, self.cfg.dry_run), held,
         )
 
     # -- helpers -------------------------------------------------------------------
